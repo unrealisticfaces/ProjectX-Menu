@@ -1,0 +1,247 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --primary: #c12320;
+  --primary-hover: #d63a37;
+  --primary-glow: rgba(193, 35, 32, 0.4);
+  --primary-soft: rgba(193, 35, 32, 0.12);
+
+  --bg-main: #050505;
+  --bg-elevated: #0d0d0d;
+  --border: #1f1f1f;
+  --text-main: #ffffff;
+  --text-muted: #9ca3af;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+}
+
+.app-container {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 240px;
+  background: linear-gradient(180deg, #0a0a0a, #050505);
+  border-right: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  padding: 20px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-menu {
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: #d4d4d4;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: all 0.25s ease;
+}
+
+.nav-link:hover {
+  background: rgba(255,255,255,0.05);
+  color: #fff;
+}
+
+.nav-link.active {
+  background: var(--primary-soft);
+  border-left: 3px solid var(--primary);
+  color: #fff;
+}
+
+.sub-menu {
+  margin-left: 16px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+/* Topbar */
+.topbar {
+  height: 60px;
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(10,10,10,0.7);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.xp-stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #111;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.xp-amount {
+  font-family: monospace;
+  color: var(--primary);
+  font-weight: bold;
+}
+
+/* Buttons */
+.claim-btn {
+  background: linear-gradient(135deg, var(--primary), #8f1a18);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.claim-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px var(--primary-glow);
+}
+
+.claim-btn:active {
+  transform: scale(0.96);
+}
+
+/* Content */
+.page-content {
+  padding: 30px;
+  overflow-y: auto;
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.page-desc {
+  color: var(--text-muted);
+}
+
+/* Card */
+.card {
+  background: linear-gradient(145deg, #0d0d0d, #050505);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  transition: all 0.25s ease;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  border-color: var(--primary);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+}
+
+/* Inputs */
+.sleek-input-container {
+  position: relative;
+}
+
+.sleek-input {
+  width: 100%;
+  padding: 10px 14px 10px 40px;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #fff;
+}
+
+.sleek-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.sleek-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #666;
+}
+
+.sleek-input:focus + .sleek-icon {
+  color: var(--primary);
+}
+
+/* Auth */
+.auth-card {
+  background: linear-gradient(145deg, #0a0a0a, #000);
+  padding: 30px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  max-width: 380px;
+  margin: auto;
+}
+/* --- Tables for History & Admin --- */
+.sleek-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.sleek-table th, .sleek-table td {
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.sleek-table th {
+  background: #111;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+.sleek-table tr:last-child td {
+  border-bottom: none;
+}
+
+.sleek-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.admin-user-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
