@@ -1,21 +1,40 @@
 {
   "name": "pc-rewards",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "version": "1.0.0",
+  "main": "main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start-electron": "electron .",
+    "build-exe": "vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.4ggamers.hub",
+    "productName": "4G GAMERS Hub",
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/images/logo/logo2.png"
+    }
   },
   "dependencies": {
+    "@studio-freight/react-lenis": "^0.0.47",
     "firebase": "^12.12.0",
+    "install": "^0.13.0",
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-hot-toast": "^2.6.0",
-    "react-router-dom": "^7.14.1"
+    "react-is": "^19.2.5",
+    "react-router-dom": "^7.14.1",
+    "recharts": "^3.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
