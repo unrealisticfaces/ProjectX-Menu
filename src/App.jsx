@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, MonitorPlay, Zap, Flame, CalendarDays, Megaphone } from 'lucide-react';
+import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, Zap, Flame, CalendarDays, Megaphone, Coins } from 'lucide-react';
 import { ref, set, get, child, update, onValue, push, remove, onChildAdded, query, limitToLast } from "firebase/database";
-import { db } from './firebase'; 
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword } from "firebase/auth";
+import { db, auth } from './firebase'; 
 import toast, { Toaster } from 'react-hot-toast'; 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './App.css';
@@ -11,30 +12,81 @@ import './App.css';
 // --- TIER SYSTEM & PROGRESS LOGIC ---
 // ==========================================
 const getTier = (lifetimeXp, config) => {
-  if (lifetimeXp >= config.goldXp) return { level: 'Gold', color: '#fbbf24' }; 
-  if (lifetimeXp >= config.silverXp) return { level: 'Silver', color: '#cbd5e1' };
+  const sXp = config?.silverXp || 2000;
+  const gXp = config?.goldXp || 5000;
+  if (lifetimeXp >= gXp) return { level: 'Gold', color: '#fbbf24' }; 
+  if (lifetimeXp >= sXp) return { level: 'Silver', color: '#cbd5e1' };
   return { level: 'Bronze', color: '#b45309' }; 
 };
 
 const getTierProgress = (lifetimeXp, config) => {
-  if (lifetimeXp < config.silverXp) {
-    return { current: lifetimeXp, target: config.silverXp, percentage: (lifetimeXp / config.silverXp) * 100, next: 'Silver', color: '#cbd5e1' };
-  } else if (lifetimeXp < config.goldXp) {
-    return { current: lifetimeXp, target: config.goldXp, percentage: ((lifetimeXp - config.silverXp) / (config.goldXp - config.silverXp)) * 100, next: 'Gold', color: '#fbbf24' };
+  const sXp = config?.silverXp || 2000;
+  const gXp = config?.goldXp || 5000;
+  if (lifetimeXp < sXp) {
+    return { current: lifetimeXp, target: sXp, percentage: (lifetimeXp / sXp) * 100, next: 'Silver', color: '#cbd5e1' };
+  } else if (lifetimeXp < gXp) {
+    return { current: lifetimeXp, target: gXp, percentage: ((lifetimeXp - sXp) / (gXp - sXp)) * 100, next: 'Gold', color: '#fbbf24' };
   } else {
     return { current: lifetimeXp, target: 'MAX', percentage: 100, next: 'Max Tier', color: '#fbbf24' };
   }
 };
 
 // ==========================================
+// --- LIVE ACTIVITY WIDGET ---
+// ==========================================
+const RecentActivityWidget = () => {
+  const [activities, setActivities] = useState([]);
+
+  useEffect(() => {
+    const usersRef = ref(db, 'users');
+    const unsubscribe = onValue(usersRef, (snapshot) => {
+      if(snapshot.exists()) {
+        let allActivity = [];
+        Object.entries(snapshot.val()).forEach(([username, data]) => {
+          if(data.purchases) {
+            Object.entries(data.purchases).forEach(([timestampKey, p]) => {
+              if(p.status === 'completed') {
+                 allActivity.push({ username, item: p.item, time: parseInt(timestampKey) });
+              }
+            });
+          }
+        });
+        allActivity.sort((a, b) => b.time - a.time);
+        setActivities(allActivity.slice(0, 4)); 
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="chart-title" style={{ textAlign: 'center', marginBottom: '16px', letterSpacing: '0.5px' }}>LIVE ACTIVITY</div>
+      {activities.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No recent claims yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {activities.map((act, idx) => (
+            <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e', flexShrink: 0 }}></div>
+              <span style={{ fontSize: '0.8rem', color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <strong style={{ color: '#fff' }}>@{act.username}</strong> claimed {act.item}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ==========================================
 // --- HOME DASHBOARD & LIVE NEWS ---
 // ==========================================
-const HomeDashboard = ({ inventory, newsList }) => {
+const HomeDashboard = ({ inventory, newsList, topPicks }) => {
   const [currentSlide, setCurrentSlide] = useState(0);
 
-  // Adjusted image size and mask for the shorter widescreen banner
   const blendedPhotoStyle = {
-    position: 'absolute', right: '-5%', top: '50%', transform: 'translateY(-50%)', width: '350px', height: '350px', 
+    position: 'absolute', right: '-5%', top: '50%', transform: 'translateY(-50%)', width: '500px', height: '500px', 
     opacity: 0.18, objectFit: 'contain', filter: 'grayscale(100%) brightness(180%)',
     WebkitMaskImage: 'radial-gradient(circle, rgba(0,0,0,1) 20%, rgba(0,0,0,0) 70%)',
     maskImage: 'radial-gradient(circle, rgba(0,0,0,1) 20%, rgba(0,0,0,0) 70%)'
@@ -72,106 +124,184 @@ const HomeDashboard = ({ inventory, newsList }) => {
   }, [slides.length]);
 
   const featuredItems = [];
-  if (inventory.battlepass && Object.values(inventory.battlepass).length > 0) featuredItems.push(Object.values(inventory.battlepass)[0]);
-  if (inventory.foods && Object.values(inventory.foods).length > 0) featuredItems.push(Object.values(inventory.foods)[0]);
-  if (inventory.drinks && Object.values(inventory.drinks).length > 0) featuredItems.push(Object.values(inventory.drinks)[0]);
+  const allItems = [
+    ...Object.values(inventory?.foods || {}).map(item => ({...item, categoryId: 'foods'})), 
+    ...Object.values(inventory?.drinks || {}).map(item => ({...item, categoryId: 'drinks'})), 
+    ...Object.values(inventory?.battlepass || {}).map(item => ({...item, categoryId: 'battlepass'})), 
+    ...Object.values(inventory?.ecoin || {}).map(item => ({...item, categoryId: 'ecoin'}))
+  ];
+
+  if (topPicks && topPicks.length > 0) {
+    topPicks.forEach(pickName => {
+      const found = allItems.find(i => i.name === pickName);
+      if (found) featuredItems.push(found);
+    });
+  } else {
+    if (inventory?.battlepass && Object.values(inventory.battlepass).length > 0) featuredItems.push({...Object.values(inventory.battlepass)[0], categoryId: 'battlepass'});
+    if (inventory?.foods && Object.values(inventory.foods).length > 0) featuredItems.push({...Object.values(inventory.foods)[0], categoryId: 'foods'});
+    if (inventory?.drinks && Object.values(inventory.drinks).length > 0) featuredItems.push({...Object.values(inventory.drinks)[0], categoryId: 'drinks'});
+  }
+
+  // --- RENDER BLOCKS ---
+  const renderAnnouncements = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
+      <h3 style={{ color: '#fff', fontSize: '1.1rem', margin: '0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <Megaphone size={20} color="var(--primary)" /> Cafe Announcements
+      </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, maxHeight: '280px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">
+        {newsList.map(n => (
+          <div 
+            key={n.id} 
+            className="card"
+            style={{ background: 'linear-gradient(to right, rgba(34, 197, 94, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(34, 197, 94, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px' }}
+          >
+            <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(34, 197, 94, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <CalendarDays size={18} color="#22c55e" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
+                <h3 style={{ color: '#22c55e', fontSize: '1rem', margin: 0 }}>{n.title}</h3>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{n.date}</span>
+              </div>
+              <p style={{ color: '#e2e8f0', fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>{n.content}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderTrending = (
+    <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+        <Flame size={20} color="var(--primary)" />
+        <h3 style={{ color: '#fff', fontSize: '1.1rem', margin: 0 }}>Trending Rewards</h3>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px', flex: 1, alignContent: 'start' }}>
+        {featuredItems.map((item, i) => {
+          const imgSrc = item?.file?.startsWith('data:image') || item?.file?.startsWith('http') ? item.file : `./images/${item.categoryId || 'battlepass'}/${item.file}`; 
+          return (
+            <div key={i} style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '8px', border: '1px solid var(--border)', padding: '12px', textAlign: 'center', position: 'relative', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ width: '100%', height: '80px', backgroundColor: '#1a1a1a', borderRadius: '6px', overflow: 'hidden', marginBottom: '10px' }}>
+                <img src={imgSrc} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={item.name} onError={(e) => { e.target.style.display = 'none' }} />
+              </div>
+              <h4 style={{ color: '#fff', fontSize: '0.85rem', marginBottom: '4px', flex: 1 }}>{item.name}</h4>
+              <span style={{ color: 'var(--primary)', fontWeight: '700', fontSize: '0.8rem', fontFamily: 'monospace' }}>{item.price} XP</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const renderTips = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
+      <h3 style={{ color: '#fff', fontSize: '1.1rem', margin: '0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <Zap size={20} color="#3b82f6" /> Quick Tips
+      </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
+        
+        <div 
+          className="card"
+          style={{ background: 'linear-gradient(to right, rgba(59, 130, 246, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}
+        >
+          <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Zap size={18} color="#3b82f6" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
+              <h3 style={{ color: '#3b82f6', fontSize: '1rem', margin: 0 }}>Level Up Faster</h3>
+              <span style={{ fontSize: '0.65rem', color: '#3b82f6', fontWeight: 'bold', letterSpacing: '0.5px', background: 'rgba(59, 130, 246, 0.15)', padding: '2px 6px', borderRadius: '4px' }}>QUICK TIP</span>
+            </div>
+            <p style={{ color: '#e2e8f0', fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+              Keep your session active to accumulate XP. Remember, your lifetime XP dictates your tier, unlocking exclusive items in the Battle Pass section! Check with the admin for special boost days.
+            </p>
+          </div>
+        </div>
+
+        <div 
+          className="card"
+          style={{ background: 'linear-gradient(to right, rgba(168, 85, 247, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(168, 85, 247, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}
+        >
+          <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(168, 85, 247, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Zap size={18} color="#a855f7" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
+              <h3 style={{ color: '#a855f7', fontSize: '1rem', margin: 0 }}>XP Multipliers</h3>
+              <span style={{ fontSize: '0.65rem', color: '#a855f7', fontWeight: 'bold', letterSpacing: '0.5px', background: 'rgba(168, 85, 247, 0.15)', padding: '2px 6px', borderRadius: '4px' }}>QUICK TIP</span>
+            </div>
+            <p style={{ color: '#e2e8f0', fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+              Play during late-night hours or on specific boost days to trigger automated XP multipliers. You can stack up your Wallet XP much faster!
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ paddingBottom: '40px' }}>
-      {/* 1. COMPACT Hero Carousel */}
-      <div style={{ width: '100%', height: '260px', position: 'relative', borderRadius: '16px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 16px 40px rgba(0,0,0,0.5)', marginBottom: '20px' }}>
+      <div style={{ width: '100%', height: '350px', position: 'relative', borderRadius: '16px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 16px 40px rgba(0,0,0,0.5)', marginBottom: '24px' }}>
         {slides.map((slide, index) => (
-          <div key={slide.id} style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '30px 50px', background: slide.color, opacity: index === currentSlide ? 1 : 0, transition: 'opacity 0.8s ease-in-out', pointerEvents: index === currentSlide ? 'auto' : 'none' }}>
+          <div key={slide.id} style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '40px 60px', background: slide.color, opacity: index === currentSlide ? 1 : 0, transition: 'opacity 0.8s ease-in-out', pointerEvents: index === currentSlide ? 'auto' : 'none' }}>
             {slide.icon}
-            <h1 style={{ fontSize: '2rem', fontWeight: 800, color: '#fff', letterSpacing: '-1px', marginBottom: '8px', maxWidth: '60%', textShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 1 }}>{slide.title}</h1>
-            <p style={{ fontSize: '1rem', color: '#e2e8f0', maxWidth: '55%', lineHeight: 1.5, zIndex: 1 }}>{slide.desc}</p>
+            <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: '#fff', letterSpacing: '-1px', marginBottom: '12px', maxWidth: '60%', textShadow: '0 4px 12px rgba(0,0,0,0.5)', zIndex: 1 }}>{slide.title}</h1>
+            <p style={{ fontSize: '1.1rem', color: '#e2e8f0', maxWidth: '50%', lineHeight: 1.6, zIndex: 1 }}>{slide.desc}</p>
           </div>
         ))}
-        <div style={{ position: 'absolute', bottom: '16px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '8px', zIndex: 10 }}>
+        <div style={{ position: 'absolute', bottom: '20px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '10px', zIndex: 10 }}>
           {slides.map((_, index) => (
-            <div key={index} style={{ width: '8px', height: '8px', borderRadius: '50%', background: index === currentSlide ? '#fff' : 'rgba(255, 255, 255, 0.3)', transform: index === currentSlide ? 'scale(1.3)' : 'scale(1)', cursor: 'pointer', transition: 'all 0.3s ease', boxShadow: index === currentSlide ? '0 0 8px rgba(255, 255, 255, 0.5)' : 'none' }} onClick={() => setCurrentSlide(index)} />
+            <div key={index} style={{ width: '10px', height: '10px', borderRadius: '50%', background: index === currentSlide ? '#fff' : 'rgba(255, 255, 255, 0.3)', transform: index === currentSlide ? 'scale(1.3)' : 'scale(1)', cursor: 'pointer', transition: 'all 0.3s ease', boxShadow: index === currentSlide ? '0 0 10px rgba(255, 255, 255, 0.5)' : 'none' }} onClick={() => setCurrentSlide(index)} />
           ))}
         </div>
       </div>
 
-      {/* 2. COMPACT Quick Action Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
         <div className="card" style={{ padding: '16px', textAlign: 'center' }}>
-          <Gamepad2 size={28} color="var(--text-muted)" style={{ margin: '0 auto 8px auto' }} />
-          <h3 style={{ color: '#fff', marginBottom: '6px', fontSize: '1rem' }}>Active Session</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>Your time is currently being tracked. XP is accumulating in the background.</p>
+          <Gamepad2 size={24} color="#0ea5e9" style={{ margin: '0 auto 8px auto' }} />
+          <h3 style={{ color: '#fff', marginBottom: '4px', fontSize: '0.95rem' }}>Active Session</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>Your time is tracked. XP is accumulating in the background.</p>
         </div>
         <div className="card" style={{ padding: '16px', textAlign: 'center' }}>
-          <Wallet size={28} color="var(--primary)" style={{ margin: '0 auto 8px auto' }} />
-          <h3 style={{ color: '#fff', marginBottom: '6px', fontSize: '1rem' }}>Claim Your XP</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>Don't forget to claim your live session XP to your wallet before you log out!</p>
+          <Wallet size={24} color="var(--primary)" style={{ margin: '0 auto 8px auto' }} />
+          <h3 style={{ color: '#fff', marginBottom: '4px', fontSize: '0.95rem' }}>Claim Your XP</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>Claim your live session XP to your wallet before logging out!</p>
         </div>
         <div className="card" style={{ padding: '16px', textAlign: 'center' }}>
-          <ShoppingCart size={28} color="#22c55e" style={{ margin: '0 auto 8px auto' }} />
-          <h3 style={{ color: '#fff', marginBottom: '6px', fontSize: '1rem' }}>Browse the Shop</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>Head over to the shop tab to exchange your hard-earned XP for real cafe rewards.</p>
+          <ShoppingCart size={24} color="#22c55e" style={{ margin: '0 auto 8px auto' }} />
+          <h3 style={{ color: '#fff', marginBottom: '4px', fontSize: '0.95rem' }}>Browse the Shop</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>Head over to the shop to exchange XP for real cafe rewards.</p>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
+      {/* INDEPENDENT COLUMNS GRID: Fixes stretching and box leveling natively */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px', alignItems: 'stretch' }}>
         
-        {/* LEFT COLUMN: Featured Items & Live News */}
+        {/* LEFT COLUMN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
-          <div className="card" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <Flame size={20} color="var(--primary)" />
-              <h3 style={{ color: '#fff', fontSize: '1.1rem', margin: 0 }}>Trending Rewards</h3>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px' }}>
-              {featuredItems.map((item, i) => {
-                const imgSrc = item.file.startsWith('data:image') || item.file.startsWith('http') ? item.file : `./images/battlepass/${item.file}`; 
-                return (
-                  <div key={i} style={{ background: 'rgba(0,0,0,0.4)', borderRadius: '8px', border: '1px solid var(--border)', padding: '12px', textAlign: 'center' }}>
-                    <div style={{ width: '100%', height: '80px', backgroundColor: '#1a1a1a', borderRadius: '6px', overflow: 'hidden', marginBottom: '10px' }}>
-                      <img src={imgSrc} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={item.name} onError={(e) => { e.target.style.display = 'none' }} />
-                    </div>
-                    <h4 style={{ color: '#fff', fontSize: '0.85rem', marginBottom: '4px' }}>{item.name}</h4>
-                    <span style={{ color: 'var(--primary)', fontWeight: '700', fontSize: '0.8rem', fontFamily: 'monospace' }}>{item.price} XP</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* DYNAMIC NEWS BOARD */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h3 style={{ color: '#fff', fontSize: '1.1rem', margin: '10px 0 0 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Megaphone size={20} color="var(--primary)" /> Cafe Announcements
-            </h3>
-            
-            {newsList.length === 0 ? (
-              <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed var(--border)', borderRadius: '12px', padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No recent announcements.
-              </div>
-            ) : (
-              newsList.map(n => (
-                <div key={n.id} style={{ background: 'linear-gradient(to right, rgba(34, 197, 94, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(34, 197, 94, 0.2)', borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
-                  <div style={{ width: '45px', height: '45px', borderRadius: '12px', background: 'rgba(34, 197, 94, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <CalendarDays size={22} color="#22c55e" />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
-                      <h3 style={{ color: '#22c55e', fontSize: '1.1rem', margin: 0 }}>{n.title}</h3>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{n.date}</span>
-                    </div>
-                    <p style={{ color: '#e2e8f0', fontSize: '0.9rem', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>{n.content}</p>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
+          {newsList?.length > 0 ? (
+            <>
+              {renderAnnouncements}
+              {renderTrending}
+            </>
+          ) : (
+            <>
+              {renderTrending}
+              {renderTips}
+            </>
+          )}
         </div>
 
-        {/* RIGHT COLUMN: Vertical Leaderboard */}
-        <div className="card" style={{ padding: '24px' }}>
-          <LeaderboardWidget layout="vertical" />
+        {/* RIGHT COLUMN */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+            <LeaderboardWidget layout="vertical" />
+          </div>
+          <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', flex: 1 }}>
+            <RecentActivityWidget />
+          </div>
         </div>
 
       </div>
@@ -181,6 +311,8 @@ const HomeDashboard = ({ inventory, newsList }) => {
 
 const TierGuideModal = ({ onClose, config }) => {
   const [page, setPage] = useState(1);
+  const sXp = config?.silverXp || 2000;
+  const gXp = config?.goldXp || 5000;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -220,8 +352,8 @@ const TierGuideModal = ({ onClose, config }) => {
               <h2 style={{ color: '#fff', fontSize: '1.3rem', marginBottom: '12px' }}>Rank Unlocks</h2>
               <div style={{ textAlign: 'left', width: '100%', marginTop: '10px', fontSize: '0.85rem' }}>
                 <div style={{ marginBottom: '10px', color: '#b45309' }}><strong>Bronze (0+ XP):</strong> Full access to Foods & Drinks.</div>
-                <div style={{ marginBottom: '10px', color: '#cbd5e1' }}><strong>Silver ({config.silverXp.toLocaleString()}+ XP):</strong> Mid-tier gaming rewards.</div>
-                <div style={{ color: '#fbbf24' }}><strong>Gold ({config.goldXp.toLocaleString()}+ XP):</strong> Unlocks premium Battle Pass items.</div>
+                <div style={{ marginBottom: '10px', color: '#cbd5e1' }}><strong>Silver ({sXp.toLocaleString()}+ XP):</strong> Mid-tier gaming rewards.</div>
+                <div style={{ color: '#fbbf24' }}><strong>Gold ({gXp.toLocaleString()}+ XP):</strong> Unlocks premium Battle Pass items.</div>
               </div>
             </div>
           )}
@@ -248,6 +380,177 @@ const TierGuideModal = ({ onClose, config }) => {
   );
 };
 
+const NewsManager = ({ newsList }) => {
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+
+  const handlePostNews = async (e) => {
+    e.preventDefault();
+    if (!title || !content) return;
+    try {
+      const newRef = push(ref(db, 'news'));
+      await set(newRef, {
+        id: newRef.key,
+        title,
+        content,
+        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        timestamp: Date.now()
+      });
+      toast.success("News posted to Home Page!");
+      setTitle('');
+      setContent('');
+    } catch (e) { toast.error("Failed to post news."); }
+  };
+
+  const handleDeleteNews = async (id) => {
+    try {
+      await remove(ref(db, `news/${id}`));
+      toast.success("News removed.");
+    } catch (e) { toast.error("Failed to delete."); }
+  };
+
+  return (
+    <div style={{ width: '100%', maxWidth: '700px' }}>
+      <h2 className="page-title" style={{ textAlign: 'center', marginBottom: '8px' }}>News Board Manager</h2>
+      <p className="page-desc" style={{ textAlign: 'center', marginBottom: '24px' }}>Post live announcements to the player Home dashboard.</p>
+      
+      <div className="auth-card" style={{ width: '100%', maxWidth: '100%', marginBottom: '30px', padding: '24px' }}>
+        <h3 style={{ color: '#fff', marginBottom: '16px', fontSize: '1.1rem' }}>Create New Announcement</h3>
+        <form onSubmit={handlePostNews} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <input type="text" placeholder="Announcement Title" className="sleek-input" required value={title} onChange={e => setTitle(e.target.value)} />
+          <textarea placeholder="Details..." className="sleek-input" rows="4" style={{ resize: 'vertical', fontFamily: 'inherit', padding: '14px' }} required value={content} onChange={e => setContent(e.target.value)} />
+          <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '4px' }}>Post to Home Page</button>
+        </form>
+      </div>
+
+      <h3 style={{ color: '#fff', marginBottom: '16px', fontSize: '1.1rem' }}>Active Announcements</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {newsList?.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>No news posted yet.</p> : null}
+        {newsList?.map(n => (
+          <div key={n.id} style={{ background: 'rgba(18,18,18,0.4)', border: '1px solid var(--border)', borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h4 style={{ color: '#fff', margin: '0 0 4px 0' }}>{n.title}</h4>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Posted {n.date}</span>
+            </div>
+            <button className="admin-icon-btn" onClick={() => handleDeleteNews(n.id)} title="Delete Post"><Trash2 size={16} color="#ef4444" /></button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const SystemConfig = ({ config }) => {
+  const [form, setForm] = useState({
+    silverXp: config?.silverXp || 2000,
+    goldXp: config?.goldXp || 5000,
+    xpPerHour: config?.xpPerHour || 1800,
+    boostDays: config?.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+    enableMidnightBoost: config?.enableMidnightBoost || false,
+    boostMultiplier: config?.boostMultiplier || 2
+  });
+
+  useEffect(() => { 
+    if(config) {
+      setForm({
+        silverXp: config.silverXp || 2000,
+        goldXp: config.goldXp || 5000,
+        xpPerHour: config.xpPerHour || 1800,
+        boostDays: config.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+        enableMidnightBoost: config.enableMidnightBoost || false,
+        boostMultiplier: config.boostMultiplier || 2
+      });
+    }
+  }, [config]);
+
+  const handleDayChange = (dayIndex, isChecked) => {
+    setForm(prev => ({
+      ...prev,
+      boostDays: { ...prev.boostDays, [dayIndex]: isChecked }
+    }));
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    try {
+      await update(ref(db, 'config'), {
+        silverXp: parseInt(form.silverXp),
+        goldXp: parseInt(form.goldXp),
+        xpPerHour: parseInt(form.xpPerHour),
+        boostDays: form.boostDays,
+        enableMidnightBoost: form.enableMidnightBoost,
+        boostMultiplier: parseFloat(form.boostMultiplier)
+      });
+      
+      const newLogRef = push(ref(db, 'admin_logs'));
+      await set(newLogRef, { action: `Updated System Economy Configurations`, timestamp: new Date().toLocaleString() });
+
+      toast.success("System configurations updated!");
+    } catch (error) { toast.error("Failed to save settings."); }
+  };
+
+  return (
+    <div className="auth-card" style={{ margin: '0', width: '100%', maxWidth: '500px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '8px' }}>
+        <Sliders color="var(--primary)" size={24} />
+        <h2 className="page-title" style={{ margin: 0 }}>System Config</h2>
+      </div>
+      <p className="page-desc" style={{ textAlign: 'center', marginBottom: '24px' }}>Adjust the game economy and automated events.</p>
+      
+      <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        
+        <h3 style={{ color: '#fff', fontSize: '0.95rem', margin: 0, borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Base Economy</h3>
+        <div className="sleek-input-container">
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>XP Earned Per Hour (Standard Rate)</span>
+          <input type="number" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.xpPerHour} onChange={e => setForm({...form, xpPerHour: e.target.value})} />
+        </div>
+
+        <h3 style={{ color: '#fff', fontSize: '0.95rem', margin: '8px 0 0 0', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Automated Event Multipliers</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+          
+          <span style={{ fontSize: '0.85rem', color: '#fff', fontWeight: '600' }}>Select Specific Boost Days:</span>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '4px' }}>
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((dayName, idx) => (
+              <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer' }}>
+                <input 
+                  type="checkbox" 
+                  checked={!!(form.boostDays && form.boostDays[idx])} 
+                  onChange={e => handleDayChange(idx, e.target.checked)} 
+                  style={{ accentColor: 'var(--primary)' }} 
+                />
+                {dayName}
+              </label>
+            ))}
+          </div>
+
+          <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }}></div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', fontSize: '0.85rem', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.enableMidnightBoost} onChange={e => setForm({...form, enableMidnightBoost: e.target.checked})} style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }} />
+            Enable Midnight Boost (12:00 AM - 6:00 AM)
+          </label>
+          <div className="sleek-input-container" style={{ marginTop: '8px' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Event Multiplier (e.g., 2 for Double XP)</span>
+            <input type="number" step="0.1" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.boostMultiplier} onChange={e => setForm({...form, boostMultiplier: e.target.value})} />
+          </div>
+        </div>
+        
+        <h3 style={{ color: '#fff', fontSize: '0.95rem', margin: '8px 0 0 0', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Tier Boundaries</h3>
+        <div className="sleek-input-container">
+          <span style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Silver Tier Requirement (Lifetime XP)</span>
+          <input type="number" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.silverXp} onChange={e => setForm({...form, silverXp: e.target.value})} />
+        </div>
+        <div className="sleek-input-container">
+          <span style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Gold Tier Requirement (Lifetime XP)</span>
+          <input type="number" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.goldXp} onChange={e => setForm({...form, goldXp: e.target.value})} />
+        </div>
+
+        <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px', width: '100%', fontSize: '0.85rem' }}>Save System Settings</button>
+      </form>
+    </div>
+  );
+};
+
 const AccountSettings = ({ currentUser }) => {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -257,27 +560,23 @@ const AccountSettings = ({ currentUser }) => {
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
     if (newPassword !== confirmPassword) { toast.error("New passwords do not match!"); return; }
-    if (newPassword.length < 4) { toast.error("Password must be at least 4 characters."); return; }
+    if (newPassword.length < 6) { toast.error("Password must be at least 6 characters."); return; }
     
     try {
-      const snapshot = await get(child(ref(db), `users/${currentUser.username}`));
-      if (snapshot.exists()) {
-        const userData = snapshot.val();
-        if (userData.password !== currentPassword) {
-          toast.error("Current password is incorrect!");
-          return;
-        }
-
-        await update(ref(db, `users/${currentUser.username}`), { password: newPassword });
+      const user = auth.currentUser;
+      if (user) {
+        await updatePassword(user, newPassword);
         toast.success("Password updated successfully!");
         setIsChangingPassword(false);
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
       } else {
-        toast.error("User not found!");
+        toast.error("Please log out and log back in to change your password.");
       }
-    } catch (error) { toast.error("Failed to update password. Check connection."); }
+    } catch (error) { 
+      toast.error("Failed to update password. You may need to sign in again."); 
+    }
   };
 
   if (!currentUser) return <div style={{ textAlign: 'center' }}><h1 className="page-title">Account Settings</h1><p className="page-desc">Please sign in to view your account details.</p></div>;
@@ -317,98 +616,36 @@ const AccountSettings = ({ currentUser }) => {
   );
 };
 
-const SystemConfig = ({ config }) => {
-  const [form, setForm] = useState(config);
+const ProductCard = ({ item, categoryId, totalXp, lifetimeXp, config, currentUser, onAddToCart, onLockedClick, isAdmin, onEdit, onDelete, onToggleStock, topPicks }) => {
+  const safePrice = item?.price || 1;
+  const progress = Math.min(100, Math.floor((totalXp / safePrice) * 100));
+  const canAfford = totalXp >= safePrice;
+  const inStock = item?.inStock !== false;
 
-  useEffect(() => { setForm(config); }, [config]);
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    try {
-      await update(ref(db, 'config'), {
-        silverXp: parseInt(form.silverXp),
-        goldXp: parseInt(form.goldXp),
-        xpPerHour: parseInt(form.xpPerHour),
-        enableWeekendBoost: form.enableWeekendBoost,
-        enableMidnightBoost: form.enableMidnightBoost,
-        boostMultiplier: parseFloat(form.boostMultiplier)
-      });
-      
-      const newLogRef = push(ref(db, 'admin_logs'));
-      await set(newLogRef, { action: `Updated System Economy Configuration`, timestamp: new Date().toLocaleString() });
-
-      toast.success("System configurations updated!");
-    } catch (error) { toast.error("Failed to save settings."); }
-  };
-
-  return (
-    <div className="auth-card" style={{ margin: '0', width: '100%', maxWidth: '450px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '8px' }}>
-        <Sliders color="var(--primary)" size={24} />
-        <h2 className="page-title" style={{ margin: 0 }}>System Config</h2>
-      </div>
-      <p className="page-desc" style={{ textAlign: 'center', marginBottom: '24px' }}>Adjust the game economy and automated events.</p>
-      
-      <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        
-        <h3 style={{ color: '#fff', fontSize: '0.95rem', margin: 0, borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Base Economy</h3>
-        <div className="sleek-input-container">
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>XP Earned Per Hour (Standard Rate)</span>
-          <input type="number" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.xpPerHour} onChange={e => setForm({...form, xpPerHour: e.target.value})} />
-        </div>
-
-        <h3 style={{ color: '#fff', fontSize: '0.95rem', margin: '8px 0 0 0', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Automated Event Multipliers</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', fontSize: '0.85rem', cursor: 'pointer' }}>
-            <input type="checkbox" checked={form.enableWeekendBoost} onChange={e => setForm({...form, enableWeekendBoost: e.target.checked})} style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }} />
-            Enable Weekend Boost (Sat & Sun)
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', fontSize: '0.85rem', cursor: 'pointer' }}>
-            <input type="checkbox" checked={form.enableMidnightBoost} onChange={e => setForm({...form, enableMidnightBoost: e.target.checked})} style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }} />
-            Enable Midnight Boost (12:00 AM - 6:00 AM)
-          </label>
-          <div className="sleek-input-container" style={{ marginTop: '8px' }}>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Event Multiplier (e.g., 2 for Double XP)</span>
-            <input type="number" step="0.1" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.boostMultiplier} onChange={e => setForm({...form, boostMultiplier: e.target.value})} />
-          </div>
-        </div>
-        
-        <h3 style={{ color: '#fff', fontSize: '0.95rem', margin: '8px 0 0 0', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Tier Boundaries</h3>
-        <div className="sleek-input-container">
-          <span style={{ fontSize: '0.8rem', color: '#cbd5e1', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Silver Tier Requirement (Lifetime XP)</span>
-          <input type="number" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.silverXp} onChange={e => setForm({...form, silverXp: e.target.value})} />
-        </div>
-        <div className="sleek-input-container">
-          <span style={{ fontSize: '0.8rem', color: '#fbbf24', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Gold Tier Requirement (Lifetime XP)</span>
-          <input type="number" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.goldXp} onChange={e => setForm({...form, goldXp: e.target.value})} />
-        </div>
-
-        <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px', width: '100%', fontSize: '0.85rem' }}>Save System Settings</button>
-      </form>
-    </div>
-  );
-};
-
-const ProductCard = ({ item, categoryId, totalXp, lifetimeXp, config, currentUser, onBuy, onLockedClick, isAdmin, onEdit, onDelete, onToggleStock }) => {
-  const progress = Math.min(100, Math.floor((totalXp / item.price) * 100));
-  const canAfford = totalXp >= item.price;
-  const inStock = item.inStock !== false;
-
+  const requiredTier = item?.requiredTier && item.requiredTier !== 'none' && item.requiredTier !== 'bronze' ? item.requiredTier : null;
   let isTierLocked = false;
-  if (currentUser && !isAdmin) {
+  
+  if (currentUser && !isAdmin && requiredTier) {
     const userTier = getTier(lifetimeXp, config); 
-    if (categoryId === 'battlepass' && userTier.level !== 'Gold') {
-      isTierLocked = true;
-    }
+    if (requiredTier === 'gold' && userTier.level !== 'Gold') isTierLocked = true;
+    if (requiredTier === 'silver' && userTier.level === 'Bronze') isTierLocked = true;
   }
 
-  const isBuyDisabled = !inStock || isAdmin;
-  const imgSrc = item.file.startsWith('data:image') || item.file.startsWith('http') ? item.file : `./images/${categoryId}/${item.file}`;
+  const isBuyDisabled = (!inStock && !isTierLocked) || isAdmin; 
+  const imgSrc = item?.file?.startsWith('data:image') || item?.file?.startsWith('http') ? item.file : `./images/${categoryId}/${item?.file || 'default.png'}`;
+
+  const isTopPick = topPicks?.includes(item?.name);
 
   return (
     <div className="card" style={{ width: '180px', display: 'flex', flexDirection: 'column', gap: '8px', opacity: !inStock && !isAdmin ? 0.6 : 1 }}>
+      {isTopPick && (
+        <div style={{ position: 'absolute', top: '-8px', right: '-8px', background: 'linear-gradient(135deg, #f97316, #ea580c)', color: '#fff', borderRadius: '12px', padding: '4px 8px', fontSize: '0.65rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', zIndex: 10, boxShadow: '0 4px 10px rgba(234, 88, 12, 0.5)' }}>
+          <Flame size={12} /> TOP PICK
+        </div>
+      )}
+
       {isAdmin && (
-        <div className="admin-card-controls">
+        <div className="admin-card-controls" style={{ top: isTopPick ? '24px' : '8px' }}>
           <button className="admin-icon-btn" onClick={() => onEdit('edit', categoryId, item)} title="Edit"><Edit size={14}/></button>
           <button className="admin-icon-btn" onClick={() => onDelete(categoryId, item.id)} title="Delete"><Trash2 size={14}/></button>
         </div>
@@ -419,25 +656,36 @@ const ProductCard = ({ item, categoryId, totalXp, lifetimeXp, config, currentUse
       </div>
       
       <div style={{ width: '100%', height: '110px', backgroundColor: '#1a1a1a', borderRadius: '6px', overflow: 'hidden', position: 'relative' }}>
-        <img src={imgSrc} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={item.name} onError={(e) => { e.target.style.display = 'none' }} />
+        {requiredTier && (
+          <div style={{ position: 'absolute', top: '8px', left: '8px', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', border: '1px solid rgba(251,191,36,0.3)', color: '#fbbf24', borderRadius: '4px', padding: '4px 6px', fontSize: '0.6rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', zIndex: 5 }}>
+            <Lock size={10} /> REQUIRES {requiredTier.toUpperCase()}
+          </div>
+        )}
+        <img src={imgSrc} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={item?.name || 'Item'} onError={(e) => { e.target.style.display = 'none' }} />
       </div>
       
-      <h3 style={{ fontSize: '0.85rem', color: '#ffffff', margin: '2px 0 0 0', textAlign: 'center' }}>{item.name}</h3>
+      <h3 style={{ fontSize: '0.85rem', color: '#ffffff', margin: '2px 0 0 0', textAlign: 'center' }}>{item?.name || 'Unknown'}</h3>
       
       <button 
-        onClick={() => isTierLocked ? onLockedClick() : onBuy(item.name, item.price)} 
+        onClick={() => {
+          if (isTierLocked) onLockedClick();
+          else onAddToCart(item.name, safePrice);
+        }}
         disabled={isBuyDisabled}
         className={`claim-btn ${!currentUser ? 'product-btn-logged-out' : ''}`} 
         style={!currentUser ? { width: '100%', marginTop: '4px', fontSize: '0.8rem', background: 'transparent', border: '1px solid var(--border)' } : { 
           width: '100%', marginTop: '4px', 
-          fontSize: isTierLocked ? '0.65rem' : '0.8rem', 
+          fontSize: '0.8rem', 
           background: (canAfford) && !isTierLocked ? '' : `linear-gradient(to right, var(--primary) ${progress}%, #1a1a1a ${progress}%)`,
           border: (canAfford) && !isTierLocked ? 'none' : '1px solid #2a2a2a',
           opacity: ((canAfford) && inStock && !isTierLocked) ? 1 : 0.8,
-          cursor: isBuyDisabled ? 'not-allowed' : 'pointer'
+          cursor: isBuyDisabled ? 'not-allowed' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
         }}
       >
-        {isAdmin ? 'ADMIN VIEW' : isTierLocked ? 'DOES NOT MEET REQUIREMENTS' : `${item.price} XP`}
+        {isAdmin ? 'ADMIN VIEW' : isTierLocked ? (
+          <><Lock size={12}/> {safePrice} XP</>
+        ) : <><ShoppingCart size={14} /> {safePrice} XP</>}
       </button>
     </div>
   );
@@ -445,7 +693,10 @@ const ProductCard = ({ item, categoryId, totalXp, lifetimeXp, config, currentUse
 
 const LeaderboardWidget = ({ layout = 'vertical' }) => {
   const [topPlayers, setTopPlayers] = useState([]);
+  
   const medalColors = ['#fbbf24', '#cbd5e1', '#b45309']; 
+  const bgColors = ['rgba(251, 191, 36, 0.15)', 'rgba(203, 213, 225, 0.15)', 'rgba(180, 83, 9, 0.15)'];
+  const borderColors = ['rgba(251, 191, 36, 0.3)', 'rgba(203, 213, 225, 0.3)', 'rgba(180, 83, 9, 0.3)'];
 
   useEffect(() => {
     const usersRef = ref(db, 'users');
@@ -465,18 +716,18 @@ const LeaderboardWidget = ({ layout = 'vertical' }) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: layout === 'horizontal' ? '10px 0' : '0' }}>
-      <div className="chart-title" style={{ textAlign: layout === 'horizontal' ? 'left' : 'center', marginBottom: layout === 'horizontal' ? '0' : '16px', letterSpacing: '0.5px' }}>Top 3 Ranked Players (Lifetime XP)</div>
+      <div className="chart-title" style={{ textAlign: layout === 'horizontal' ? 'left' : 'center', marginBottom: layout === 'horizontal' ? '0' : '16px', letterSpacing: '0.5px' }}>TOP 3 RANKED</div>
       {topPlayers.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No data available.</div>
       ) : (
         <div className={layout === 'horizontal' ? "leaderboard-list-horizontal" : "leaderboard-list"}>
           {topPlayers.map((player, idx) => (
-            <div key={player.username} className="leaderboard-item">
-              <div className="player-info">
+            <div key={player.username} className="leaderboard-item" style={{ background: bgColors[idx], border: `1px solid ${borderColors[idx]}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="player-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <Medal size={22} color={medalColors[idx]} /> 
-                <span className="player-name">@{player.username}</span>
+                <span className="player-name" style={{ fontWeight: 'bold', color: '#fff' }}>@{player.username}</span>
               </div>
-              <span className="xp-score">{player.xp} XP</span>
+              <span className="xp-score" style={{ fontWeight: 'bold', color: medalColors[idx] }}>{player.xp} XP</span>
             </div>
           ))}
         </div>
@@ -622,7 +873,7 @@ const OrderQueue = () => {
         Object.entries(usersObj).forEach(([username, data]) => {
           if (username !== 'admin' && data.purchases) {
             Object.entries(data.purchases).forEach(([timestampKey, p]) => {
-              purchasesArr.push({ ...p, username, name: data.name, timestampKey: parseInt(timestampKey) });
+              purchasesArr.push({ ...p, username, name: data?.name || 'Unknown', timestampKey: parseInt(timestampKey) });
             });
           }
         });
@@ -753,7 +1004,7 @@ const AdminLog = () => {
             <tbody>
               {currentLogs.map((log, i) => (
                 <tr key={i}>
-                  <td style={{ color: 'var(--text-muted)', width: '220px' }}>{log.timestamp}</td>
+                  <td style={{ color: 'var(--text-muted)' }}>{log.timestamp}</td>
                   <td style={{ color: '#fff' }}>{log.action}</td>
                 </tr>
               ))}
@@ -789,21 +1040,40 @@ const AccountsList = () => {
 
   const handleSaveUser = async (e) => {
     e.preventDefault();
-    if (editUserModal.password.length < 4) { toast.error("Password must be at least 4 characters."); return; }
     
     try {
-      await update(ref(db, `users/${editUserModal.username}`), { name: editUserModal.name, password: editUserModal.password });
-      setUsers(prev => ({ ...prev, [editUserModal.username]: { ...prev[editUserModal.username], name: editUserModal.name, password: editUserModal.password } }));
+      await update(ref(db, `users/${editUserModal.username}`), { name: editUserModal.name });
+      
+      setUsers(prev => ({ ...prev, [editUserModal.username]: { ...prev[editUserModal.username], name: editUserModal.name } }));
       const newLogRef = push(ref(db, 'admin_logs'));
-      await set(newLogRef, { action: `Updated account details/password for @${editUserModal.username}`, timestamp: new Date().toLocaleString() });
+      await set(newLogRef, { action: `Updated account details for @${editUserModal.username}`, timestamp: new Date().toLocaleString() });
       toast.success(`Account @${editUserModal.username} updated!`);
       setEditUserModal({ open: false, username: '', name: '', password: '' });
     } catch (error) { toast.error("Failed to update user."); }
   };
 
+  const handleDeleteUser = async (username) => {
+    if (window.confirm(`Are you absolutely sure you want to permanently delete the account @${username}?`)) {
+      try {
+        await remove(ref(db, `users/${username}`));
+        
+        const newUsers = { ...users };
+        delete newUsers[username];
+        setUsers(newUsers);
+
+        const newLogRef = push(ref(db, 'admin_logs'));
+        await set(newLogRef, { action: `Deleted user account: @${username}`, timestamp: new Date().toLocaleString() });
+
+        toast.success(`Account @${username} has been deleted.`);
+      } catch (error) {
+        toast.error("Failed to delete user account.");
+      }
+    }
+  };
+
   const filteredUsers = Object.entries(users).filter(([username, data]) => {
     if (username === 'admin') return false;
-    return username.toLowerCase().includes(search.toLowerCase()) || (data.name && data.name.toLowerCase().includes(search.toLowerCase()));
+    return username.toLowerCase().includes(search.toLowerCase()) || (data?.name && data.name.toLowerCase().includes(search.toLowerCase()));
   });
 
   const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
@@ -830,12 +1100,17 @@ const AccountsList = () => {
                   @{username}
                 </div>
               </td>
-              <td style={{ color: 'var(--text-muted)' }}>{data.name}</td>
+              <td style={{ color: 'var(--text-muted)' }}>{data?.name || 'Unknown'}</td>
               <td style={{ color: 'var(--primary)', fontFamily: 'monospace', fontWeight: 'bold' }}>{data.xp || 0} XP</td>
               <td>
-                <button className="admin-icon-btn" onClick={() => setEditUserModal({ open: true, username: username, name: data.name, password: data.password })} title="Edit User">
-                  <Edit size={14}/>
-                </button>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button className="admin-icon-btn" onClick={() => setEditUserModal({ open: true, username: username, name: data?.name || '', password: '' })} title="Edit User">
+                    <Edit size={14}/>
+                  </button>
+                  <button className="admin-icon-btn" onClick={() => handleDeleteUser(username)} title="Delete User">
+                    <Trash2 size={14} color="#ef4444" />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -861,11 +1136,6 @@ const AccountsList = () => {
                 <div className="sleek-input-container">
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Full Name:</span>
                   <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editUserModal.name} onChange={e => setEditUserModal({...editUserModal, name: e.target.value})} />
-                </div>
-                
-                <div className="sleek-input-container">
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Reset Password:</span>
-                  <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editUserModal.password} onChange={e => setEditUserModal({...editUserModal, password: e.target.value})} />
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
@@ -900,23 +1170,6 @@ const PurchaseHistory = ({ currentUser }) => {
     }
   }, [currentUser]);
 
-  const handleCancelOrder = async (timestampKey, price, itemName) => {
-    try {
-      const userRef = ref(db, `users/${currentUser.username}`);
-      const snapshot = await get(userRef);
-      if(snapshot.exists()) {
-        const userData = snapshot.val();
-        const refundedXp = (userData.xp || 0) + price;
-        
-        await update(userRef, {
-          xp: refundedXp,
-          [`purchases/${timestampKey}/status`]: 'cancelled'
-        });
-        toast.success(`Cancelled ${itemName} and refunded ${price} XP!`);
-      }
-    } catch (error) { toast.error("Failed to cancel order."); }
-  };
-
   if (!currentUser) return <p style={{ color: 'var(--text-muted)', textAlign: 'center', fontSize: '0.85rem' }}>Please log in to view history.</p>;
 
   const totalPages = Math.ceil(history.length / itemsPerPage);
@@ -930,32 +1183,20 @@ const PurchaseHistory = ({ currentUser }) => {
       {history.length === 0 ? <p style={{ color: 'var(--text-muted)', textAlign: 'center', fontSize: '0.85rem' }}>You haven't bought anything yet.</p> : (
         <>
           <table className="sleek-table">
-            <thead><tr><th>Date & Time</th><th>Item</th><th>Status</th><th>XP Cost</th><th>Action</th></tr></thead>
+            <thead><tr><th>Date & Time</th><th>Item</th><th>Status</th><th>XP Cost</th></tr></thead>
             <tbody>
-              {currentHistory.map((purchase, index) => {
-                const isPending = !purchase.status || purchase.status === 'pending';
-                return (
-                  <tr key={index}>
-                    <td style={{ color: 'var(--text-muted)' }}>{purchase.date}</td>
-                    <td style={{ fontWeight: '600', color: '#fff' }}>{purchase.item}</td>
-                    <td>
-                      <span className={`status-badge status-${purchase.status || 'pending'}`}>
-                        {purchase.status || 'pending'}
-                      </span>
-                    </td>
-                    <td style={{ color: 'var(--primary)', fontFamily: 'monospace' }}>{purchase.price} XP</td>
-                    <td>
-                      {isPending ? (
-                         <button className="claim-btn" style={{ padding: '4px 8px', fontSize: '0.7rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }} onClick={() => handleCancelOrder(purchase.timestampKey, purchase.price, purchase.item)}>
-                           Cancel Order
-                         </button>
-                      ) : (
-                         <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'capitalize' }}>--</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {currentHistory.map((purchase, index) => (
+                <tr key={index}>
+                  <td style={{ color: 'var(--text-muted)' }}>{purchase.date}</td>
+                  <td style={{ fontWeight: '600', color: '#fff' }}>{purchase.item}</td>
+                  <td>
+                    <span className={`status-badge status-${purchase.status || 'pending'}`}>
+                      {purchase.status || 'pending'}
+                    </span>
+                  </td>
+                  <td style={{ color: 'var(--primary)', fontFamily: 'monospace' }}>{purchase.price} XP</td>
+                </tr>
+              ))}
             </tbody>
           </table>
 
@@ -972,82 +1213,32 @@ const PurchaseHistory = ({ currentUser }) => {
   );
 };
 
-// --- ADMIN NEWS MANAGER COMPONENT ---
-const NewsManager = ({ newsList }) => {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-
-  const handlePostNews = async (e) => {
-    e.preventDefault();
-    if (!title || !content) return;
-    try {
-      const newRef = push(ref(db, 'news'));
-      await set(newRef, {
-        id: newRef.key,
-        title,
-        content,
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        timestamp: Date.now()
-      });
-      toast.success("News posted to Home Page!");
-      setTitle('');
-      setContent('');
-    } catch (e) { toast.error("Failed to post news."); }
-  };
-
-  const handleDeleteNews = async (id) => {
-    try {
-      await remove(ref(db, `news/${id}`));
-      toast.success("News removed.");
-    } catch (e) { toast.error("Failed to delete."); }
-  };
-
-  return (
-    <div style={{ width: '100%', maxWidth: '700px' }}>
-      <h2 className="page-title" style={{ textAlign: 'center', marginBottom: '8px' }}>News Board Manager</h2>
-      <p className="page-desc" style={{ textAlign: 'center', marginBottom: '24px' }}>Post live announcements to the player Home dashboard.</p>
-      
-      <div className="auth-card" style={{ width: '100%', maxWidth: '100%', marginBottom: '30px', padding: '24px' }}>
-        <h3 style={{ color: '#fff', marginBottom: '16px', fontSize: '1.1rem' }}>Create New Announcement</h3>
-        <form onSubmit={handlePostNews} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <input type="text" placeholder="Announcement Title" className="sleek-input" required value={title} onChange={e => setTitle(e.target.value)} />
-          <textarea placeholder="Details..." className="sleek-input" rows="4" style={{ resize: 'vertical', fontFamily: 'inherit', padding: '14px' }} required value={content} onChange={e => setContent(e.target.value)} />
-          <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '4px' }}>Post to Home Page</button>
-        </form>
-      </div>
-
-      <h3 style={{ color: '#fff', marginBottom: '16px', fontSize: '1.1rem' }}>Active Announcements</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {newsList.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>No news posted yet.</p> : null}
-        {newsList.map(n => (
-          <div key={n.id} style={{ background: 'rgba(18,18,18,0.4)', border: '1px solid var(--border)', borderRadius: '12px', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h4 style={{ color: '#fff', margin: '0 0 4px 0' }}>{n.title}</h4>
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Posted {n.date}</span>
-            </div>
-            <button className="admin-icon-btn" onClick={() => handleDeleteNews(n.id)} title="Delete Post"><Trash2 size={16} color="#ef4444" /></button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 function AppContent() {
   const [currentUser, setCurrentUser] = useState(null); 
   const [totalXp, setTotalXp] = useState(0); 
   const [lifetimeXp, setLifetimeXp] = useState(0);
 
-  const [sessionTime, setSessionTime] = useState(0); 
-  const [claimedSessionXp, setClaimedSessionXp] = useState(0); 
+  const [rawPendingXp, setRawPendingXp] = useState(0); 
   
-  const [sysConfig, setSysConfig] = useState({ silverXp: 2000, goldXp: 5000, xpPerHour: 1800, enableWeekendBoost: false, enableMidnightBoost: false, boostMultiplier: 2 });
+  const [sysConfig, setSysConfig] = useState({ 
+    silverXp: 2000, 
+    goldXp: 5000, 
+    xpPerHour: 1800, 
+    boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+    enableMidnightBoost: false, 
+    boostMultiplier: 2 
+  });
   
   const sysConfigRef = useRef(sysConfig);
   useEffect(() => { sysConfigRef.current = sysConfig; }, [sysConfig]);
 
   const [newsList, setNewsList] = useState([]);
   
+  const [topPicks, setTopPicks] = useState([]);
+  
+  const [cart, setCart] = useState([]);
+  const [showCartModal, setShowCartModal] = useState(false);
+
   const [isShopOpen, setIsShopOpen] = useState(false); 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -1058,10 +1249,10 @@ function AppContent() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTierGuide, setShowTierGuide] = useState(false);
 
-  const [inventory, setInventory] = useState({ foods: {}, drinks: {}, battlepass: {} });
+  const [inventory, setInventory] = useState({ foods: {}, drinks: {}, battlepass: {}, ecoin: {} });
   
   const [editorModal, setEditorModal] = useState({ open: false, mode: 'add', category: '', item: null });
-  const [editForm, setEditForm] = useState({ name: '', price: '', file: '', inStock: 'true' });
+  const [editForm, setEditForm] = useState({ name: '', price: '', file: '', inStock: 'true', requiredTier: 'none' });
 
   const [deleteModal, setDeleteModal] = useState({ open: false, category: '', id: '', name: '' });
 
@@ -1073,12 +1264,49 @@ function AppContent() {
   const isAdmin = currentUser?.username === 'admin';
 
   useEffect(() => {
+    const usersRef = ref(db, 'users');
+    const unsubscribe = onValue(usersRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const usersObj = snapshot.val();
+        const productCounts = {};
+        Object.values(usersObj).forEach(user => {
+          if (user.purchases) {
+            Object.values(user.purchases).forEach(p => {
+              if (p.status === 'completed') {
+                productCounts[p.item] = (productCounts[p.item] || 0) + 1;
+              }
+            });
+          }
+        });
+        const sorted = Object.entries(productCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(entry => entry[0]);
+        setTopPicks(sorted);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const configRef = ref(db, 'config');
     const unsubscribe = onValue(configRef, (snapshot) => {
       if (snapshot.exists()) {
-        setSysConfig(snapshot.val());
+        const dbConfig = snapshot.val();
+        setSysConfig({
+          silverXp: dbConfig.silverXp || 2000,
+          goldXp: dbConfig.goldXp || 5000,
+          xpPerHour: dbConfig.xpPerHour || 1800,
+          boostDays: dbConfig.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+          enableMidnightBoost: dbConfig.enableMidnightBoost || false,
+          boostMultiplier: dbConfig.boostMultiplier || 2
+        });
       } else {
-        const defConfig = { silverXp: 2000, goldXp: 5000, xpPerHour: 1800, enableWeekendBoost: false, enableMidnightBoost: false, boostMultiplier: 2 };
+        const defConfig = { 
+          silverXp: 2000, goldXp: 5000, xpPerHour: 1800, 
+          boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+          enableMidnightBoost: false, boostMultiplier: 2 
+        };
         set(configRef, defConfig);
         setSysConfig(defConfig);
       }
@@ -1090,7 +1318,7 @@ function AppContent() {
     const newsRef = ref(db, 'news');
     const unsubscribe = onValue(newsRef, (snapshot) => {
       if (snapshot.exists()) {
-        const sortedNews = Object.values(snapshot.val()).sort((a, b) => b.timestamp - a.timestamp);
+        const sortedNews = Object.values(snapshot.val()).sort((a, b) => (b?.timestamp || 0) - (a?.timestamp || 0));
         setNewsList(sortedNews);
       } else {
         setNewsList([]);
@@ -1160,8 +1388,8 @@ function AppContent() {
       const q = query(ref(db, 'live_notifications'), limitToLast(1));
       const unsubscribe = onChildAdded(q, (snapshot) => {
         const notif = snapshot.val();
-        if (Date.now() - notif.time < 5000) {
-          toast(`New Order: @${notif.username} wants ${notif.item}!`, {
+        if (Date.now() - (notif?.time || 0) < 5000) {
+          toast(`New Order: @${notif?.username || 'Unknown'} wants ${notif?.item || 'an item'}!`, {
             icon: '🔔',
             style: { background: 'var(--primary)', color: '#fff', fontWeight: 'bold' },
             duration: 6000
@@ -1201,21 +1429,7 @@ function AppContent() {
         setInventory(snapshot.val());
       } else {
         const defaultInv = {
-          foods: {
-            f1: { id: 'f1', name: 'Chili Mansi', file: 'chilimansi.webp', price: 80, inStock: true },
-            f2: { id: 'f2', name: 'Sweet N Spicy', file: 'sweetspicy.webp', price: 60, inStock: true },
-            f3: { id: 'f3', name: 'Sandwich', file: 'sandwich.jpeg', price: 100, inStock: true }
-          },
-          drinks: {
-            d1: { id: 'd1', name: 'Sprite', file: 'sprite.webp', price: 50, inStock: true },
-            d2: { id: 'd2', name: 'Coke', file: 'coke.webp', price: 50, inStock: true },
-            d3: { id: 'd3', name: 'Mountain Dew', file: 'mountaindew.webp', price: 50, inStock: true }
-          },
-          battlepass: {
-            b1: { id: 'b1', name: '100 Steam Points', file: 'steam.webp', price: 500, inStock: true },
-            b2: { id: 'b2', name: 'Valorant 300 VP', file: 'valorant.webp', price: 1200, inStock: true },
-            b3: { id: 'b3', name: '1 Hr Free PC Time', file: 'pctime.webp', price: 600, inStock: true }
-          }
+          foods: {}, drinks: {}, battlepass: {}, ecoin: {}
         };
         await set(ref(db, 'inventory'), defaultInv);
         setInventory(defaultInv);
@@ -1224,8 +1438,6 @@ function AppContent() {
     return () => unsubscribe();
   }, []);
 
-  const [rawPendingXp, setRawPendingXp] = useState(0); 
-
   useEffect(() => {
     let os;
     try { os = window.require('os'); } catch (e) { setIsWebMode(true); }
@@ -1233,16 +1445,20 @@ function AppContent() {
     const timer = setInterval(() => {
       const config = sysConfigRef.current;
       let mult = 1;
-      const d = new Date();
       
-      const isWeekend = d.getDay() === 0 || d.getDay() === 6; 
+      const d = new Date();
+      const day = d.getDay(); 
       const isMidnight = d.getHours() >= 0 && d.getHours() < 6; 
 
-      if ((config.enableWeekendBoost && isWeekend) || (config.enableMidnightBoost && isMidnight)) {
-        mult = config.boostMultiplier || 2; 
+      const isBoostDay = config?.boostDays && config.boostDays[day];
+
+      if (isBoostDay || (config?.enableMidnightBoost && isMidnight)) {
+        mult = config?.boostMultiplier || 2; 
       }
 
-      const xpPerSecond = (config.xpPerHour / 3600) * mult;
+      const baseRate = config?.xpPerHour ? (config.xpPerHour / 3600) : 0.5;
+      const xpPerSecond = baseRate * mult;
+      
       setRawPendingXp((prev) => prev + xpPerSecond);
     }, 1000);
     
@@ -1254,43 +1470,73 @@ function AppContent() {
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     const dbRef = ref(db);
+    
+    const safeUsername = authForm.username.trim().toLowerCase();
+    const systemEmail = `${safeUsername}@4ggamers.local`; 
+
     try {
       if (isLoginView) {
-        const snapshot = await get(child(dbRef, `users/${authForm.username}`));
+        await signInWithEmailAndPassword(auth, systemEmail, authForm.password);
+        
+        const snapshot = await get(child(dbRef, `users/${safeUsername}`));
         if (snapshot.exists()) {
           const data = snapshot.val();
-          if (data.password === authForm.password) {
-            setCurrentUser({ username: authForm.username, name: data.name });
-            setTotalXp(data.xp || 0);
-            setLifetimeXp(data.lifetimeXp !== undefined ? data.lifetimeXp : (data.xp || 0));
-            setRawPendingXp(0); 
+          setCurrentUser({ username: safeUsername, name: data?.name || 'Unknown' });
+          setTotalXp(data.xp || 0);
+          setLifetimeXp(data.lifetimeXp !== undefined ? data.lifetimeXp : (data.xp || 0));
+          setRawPendingXp(0); 
+          setCart([]); 
+          
+          setShowLoginModal(false);
+          await update(ref(db, `users/${safeUsername}`), { isOnline: true });
+          
+          // 1. First, show the success toast
+          toast.success(`Welcome back, ${data?.name || 'Player'}!`);
+
+          if (safeUsername === 'admin') {
+            const token = Math.random().toString(36).substr(2);
+            localStorage.setItem('adminToken', token);
             
-            setShowLoginModal(false);
-            await update(ref(db, `users/${authForm.username}`), { isOnline: true });
-            toast.success(`Welcome back, ${data.name}!`);
-            if (authForm.username === 'admin') {
-              const token = Math.random().toString(36).substr(2);
-              localStorage.setItem('adminToken', token);
+            // 2. Wrap the session tracker in its own try/catch to prevent the double-toast bug
+            try {
               await set(ref(db, 'admin_session'), { token });
-              navigate('/dashboard');
+            } catch (sessionErr) {
+              console.warn("Minor issue: DB rules blocked admin_session write, skipping to prevent crash.", sessionErr);
             }
-          } else { toast.error("Incorrect password."); }
-        } else { toast.error("Username not found."); }
+            
+            // 3. Continue to dashboard safely
+            navigate('/dashboard');
+          }
+        }
       } else {
         if (!authForm.name || !authForm.username || !authForm.password) { toast.error("Please fill all fields."); return; }
-        const snapshot = await get(child(dbRef, `users/${authForm.username}`));
+        
+        if (safeUsername.includes(' ')) { toast.error("Username cannot contain spaces."); return; }
+
+        if (safeUsername.includes('admin') && safeUsername !== 'admin') { 
+          toast.error("You cannot use the word 'admin' in your username."); return; 
+        }
+
+        const snapshot = await get(child(dbRef, `users/${safeUsername}`));
         if (snapshot.exists()) { toast.error("Username already taken!"); } 
         else {
-          await set(ref(db, `users/${authForm.username}`), { name: authForm.name, password: authForm.password, xp: 0, lifetimeXp: 0, isOnline: true });
-          setCurrentUser({ username: authForm.username, name: authForm.name });
+          await createUserWithEmailAndPassword(auth, systemEmail, authForm.password);
+          
+          await set(ref(db, `users/${safeUsername}`), { name: authForm.name, xp: 0, lifetimeXp: 0, isOnline: true });
+          setCurrentUser({ username: safeUsername, name: authForm.name });
           setTotalXp(0);
           setLifetimeXp(0);
           setRawPendingXp(0);
+          setCart([]);
           setShowLoginModal(false);
           toast.success("Account created and logged in!");
         }
       }
-    } catch (error) { toast.error("Connection failed."); }
+    } catch (error) { 
+      if (error.code === 'auth/email-already-in-use') toast.error("Username already taken!");
+      else if (error.code === 'auth/wrong-password' || error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') toast.error("Incorrect username or password.");
+      else toast.error("Authentication failed. Please try again."); 
+    }
   };
 
   const handleLogout = async () => {
@@ -1300,6 +1546,7 @@ function AppContent() {
     setCurrentUser(null);
     setTotalXp(0);
     setLifetimeXp(0);
+    setCart([]);
     setShowUserMenu(false);
     toast.success("Logged out successfully.");
     navigate('/');
@@ -1323,26 +1570,61 @@ function AppContent() {
     } else { toast.error("No XP to claim yet."); }
   };
 
-  const handleBuy = async (item, price) => {
+  const handleAddToCart = (item, price) => {
     if (!currentUser) { openLoginModal(); return; }
-    
-    if (totalXp >= price) {
-      const newTotal = totalXp - price;
+    setCart(prev => {
+      const existing = prev.find(c => c.item === item);
+      if (existing) {
+        return prev.map(c => c.item === item ? { ...c, quantity: c.quantity + 1 } : c);
+      }
+      return [...prev, { item, price, quantity: 1, id: Date.now() + Math.random() }];
+    });
+    toast.success(`${item} added to cart!`);
+  };
+
+  const handleRemoveFromCart = (id) => {
+    setCart(prev => prev.filter(c => c.id !== id));
+  };
+
+  const handleCheckout = async () => {
+    if (!currentUser) return;
+    if (cart.length === 0) return;
+
+    const cartTotal = cart.reduce((sum, current) => sum + (current.price * current.quantity), 0);
+
+    if (totalXp >= cartTotal) {
+      const newTotal = totalXp - cartTotal;
       setTotalXp(newTotal); 
       
       const timestamp = new Date().toLocaleString(); 
       const updates = {};
       
       updates[`users/${currentUser.username}/xp`] = newTotal;
-      updates[`users/${currentUser.username}/purchases/${Date.now()}`] = { item, price, date: timestamp, status: 'pending' };
+
+      let timeBase = Date.now();
+      cart.forEach((cartItem) => {
+        for(let i = 0; i < cartItem.quantity; i++) {
+          updates[`users/${currentUser.username}/purchases/${timeBase++}`] = { 
+            item: cartItem.item, 
+            price: cartItem.price, 
+            date: timestamp, 
+            status: 'pending' 
+          };
+        }
+      });
       
       await update(ref(db), updates);
       
-      const notifRef = push(ref(db, 'live_notifications'));
-      await set(notifRef, { username: currentUser.username, item: item, time: Date.now() });
+      cart.forEach(async (cartItem) => {
+        const notifRef = push(ref(db, 'live_notifications'));
+        await set(notifRef, { username: currentUser.username, item: `${cartItem.quantity}x ${cartItem.item}`, time: Date.now() });
+      });
 
-      toast.success(`Order placed! Please wait for Admin approval.`, { duration: 5000 });
-    } else { toast.error(`Not enough XP! Need ${price - totalXp} more.`); }
+      const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+      toast.success(`Order placed for ${itemCount} item(s)! Please wait for Admin approval.`, { duration: 5000 });
+      setCart([]);
+      setShowCartModal(false);
+    } else { toast.error(`Not enough XP! Need ${cartTotal - totalXp} more.`); }
   };
 
   const handleImageUpload = (e) => {
@@ -1359,14 +1641,15 @@ function AppContent() {
     if (!editForm.file) { toast.error("Please upload an image or provide a filename."); return; }
 
     const cat = editorModal.category;
-    let targetId = editorModal.mode === 'edit' ? editorModal.item.id : `prod_${Date.now()}`;
+    let targetId = editorModal.mode === 'edit' ? editorModal.item?.id : `prod_${Date.now()}`;
     
     const productData = {
       id: targetId,
       name: editForm.name,
       price: parseInt(editForm.price),
       file: editForm.file,
-      inStock: editForm.inStock === 'true'
+      inStock: editForm.inStock === 'true',
+      requiredTier: editForm.requiredTier || 'none'
     };
 
     await set(ref(db, `inventory/${cat}/${targetId}`), productData);
@@ -1376,7 +1659,7 @@ function AppContent() {
   };
 
   const requestDelete = (cat, id) => {
-    const itemName = inventory[cat][id].name;
+    const itemName = inventory[cat][id]?.name || 'Unknown';
     setDeleteModal({ open: true, category: cat, id, name: itemName });
   };
 
@@ -1390,14 +1673,14 @@ function AppContent() {
 
   const toggleStock = async (cat, id, currentStock) => {
     await update(ref(db, `inventory/${cat}/${id}`), { inStock: !currentStock });
-    const itemName = inventory[cat][id].name;
+    const itemName = inventory[cat][id]?.name || 'Item';
     await logAction(`Marked ${itemName} as ${!currentStock ? 'In Stock' : 'Out of Stock'}`);
   };
 
   const openEditor = (mode, cat, item = null) => {
     setEditorModal({ open: true, mode, category: cat, item });
-    if(mode === 'edit') setEditForm({ ...item, inStock: item.inStock !== false ? 'true' : 'false' });
-    else setEditForm({ name: '', price: '', file: '', inStock: 'true' });
+    if(mode === 'edit') setEditForm({ ...item, inStock: item?.inStock !== false ? 'true' : 'false', requiredTier: item?.requiredTier || 'none' });
+    else setEditForm({ name: '', price: '', file: '', inStock: 'true', requiredTier: 'none' });
   };
 
   const renderCategoryPage = (title, desc, catKey) => (
@@ -1425,25 +1708,31 @@ function AppContent() {
             lifetimeXp={lifetimeXp} 
             config={sysConfig}
             currentUser={currentUser} 
-            onBuy={handleBuy} 
+            onAddToCart={handleAddToCart} 
             onLockedClick={() => setShowTierGuide(true)}
             categoryId={catKey} 
             isAdmin={isAdmin} 
             onEdit={openEditor} 
             onDelete={requestDelete} 
             onToggleStock={toggleStock} 
+            topPicks={topPicks} 
           />
         ))}
       </div>
     </>
   );
 
+  const cartTotal = cart.reduce((sum, current) => sum + (current.price * current.quantity), 0);
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
   return (
     <div className="app-container" onClick={() => showUserMenu && setShowUserMenu(false)}>
       <Toaster position="bottom-right" toastOptions={{ style: { background: 'var(--bg-elevated)', color: '#fff', border: '1px solid var(--border)', fontSize: '13px', borderRadius: '8px' }, success: { iconTheme: { primary: 'var(--primary)', secondary: '#ffffff' } }, error: { iconTheme: { primary: '#ef4444', secondary: '#ffffff' } } }} />
 
+      {/* TIER GUIDE MODAL */}
       {showTierGuide && <TierGuideModal config={sysConfig} onClose={() => setShowTierGuide(false)} />}
 
+      {/* LOGIN MODAL */}
       {showLoginModal && (
         <div className="modal-overlay" onClick={() => setShowLoginModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1468,6 +1757,61 @@ function AppContent() {
         </div>
       )}
 
+      {/* CART MODAL */}
+      {showCartModal && (
+        <div className="modal-overlay" onClick={() => setShowCartModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <div className="auth-card" style={{ position: 'relative' }}>
+              <button className="close-modal" onClick={() => setShowCartModal(false)}><X size={20}/></button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
+                <ShoppingCart size={24} color="var(--primary)" />
+                <h2 style={{ color: '#fff', fontSize: '1.3rem', margin: 0 }}>Your Cart</h2>
+              </div>
+
+              {cart.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>
+                  Your cart is currently empty.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">
+                    {cart.map((cartItem) => (
+                      <div key={cartItem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                        <span style={{ color: '#fff', fontSize: '0.9rem' }}>
+                          {cartItem.quantity > 1 && <span style={{ color: 'var(--primary)', fontWeight: 'bold', marginRight: '6px' }}>{cartItem.quantity}x</span>}
+                          {cartItem.item}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <span style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '0.85rem' }}>{cartItem.price * cartItem.quantity} XP</span>
+                          <button className="admin-icon-btn" onClick={() => handleRemoveFromCart(cartItem.id)}><X size={16} color="#ef4444" /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div style={{ height: '1px', background: 'var(--border)', margin: '20px 0' }}></div>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Total Cost:</span>
+                    <span style={{ color: '#fff', fontSize: '1.2rem', fontWeight: 'bold' }}>{cartTotal} XP</span>
+                  </div>
+
+                  <button 
+                    className="claim-btn" 
+                    style={{ width: '100%', padding: '12px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} 
+                    onClick={handleCheckout}
+                    disabled={totalXp < cartTotal}
+                  >
+                    <CheckCircle size={18} /> {totalXp >= cartTotal ? 'Place Order' : 'Not Enough XP'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRODUCT EDITOR MODAL */}
       {editorModal.open && (
         <div className="modal-overlay" onClick={() => setEditorModal({ open: false, mode: 'add', category: '', item: null })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1485,8 +1829,23 @@ function AppContent() {
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Price (XP):</span>
                   <input type="number" placeholder="Price (XP)" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editForm.price} onChange={e => setEditForm({...editForm, price: e.target.value})} />
                 </div>
-                
+
                 <div className="sleek-input-container">
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Tier Requirement:</span>
+                  <select 
+                    className="sleek-input" 
+                    style={{ paddingLeft: '14px', appearance: 'none', cursor: 'pointer', fontSize: '0.85rem' }} 
+                    value={editForm.requiredTier || 'none'} 
+                    onChange={e => setEditForm({...editForm, requiredTier: e.target.value})}
+                  >
+                    <option value="none">None (Bronze+)</option>
+                    <option value="silver">Silver Tier</option>
+                    <option value="gold">Gold Tier</option>
+                  </select>
+                  <ChevronDown size={14} style={{ position: 'absolute', right: '14px', top: '38px', color: 'var(--text-muted)' }} />
+                </div>
+                
+                <div className="sleek-input-container" style={{ marginTop: '4px' }}>
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Stock Status:</span>
                   <select 
                     className="sleek-input" 
@@ -1512,6 +1871,7 @@ function AppContent() {
         </div>
       )}
 
+      {/* DELETE CONFIRMATION MODAL */}
       {deleteModal.open && (
         <div className="modal-overlay" onClick={() => setDeleteModal({ open: false, category: '', id: '', name: '' })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '320px' }}>
@@ -1554,6 +1914,7 @@ function AppContent() {
             <div className="sub-menu">
               <NavLink to="/shop/foods" className="nav-link sub-link"><Pizza size={14} /> Foods</NavLink>
               <NavLink to="/shop/drinks" className="nav-link sub-link"><Coffee size={14} /> Drinks</NavLink>
+              <NavLink to="/shop/ecoin" className="nav-link sub-link"><Coins size={14} /> E-Coin</NavLink>
             </div>
           )}
 
@@ -1601,71 +1962,92 @@ function AppContent() {
           </div>
           
           {currentUser ? (
-            <div style={{ position: 'relative' }}>
-              <button 
-                className="admin-icon-btn" 
-                onClick={(e) => { e.stopPropagation(); setShowUserMenu(!showUserMenu); }} 
-                style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0' }}
-              >
-                <User size={20} />
-              </button>
-
-              {showUserMenu && (
-                <div className="user-dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                  <div className="drop-header">
-                    <div className="drop-avatar"><User size={24} color="#ccc" /></div>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span className="drop-name">{currentUser.name}</span>
-                      <span className="drop-user">@{currentUser.username}</span>
-                    </div>
-                  </div>
-                  
-                  <div className="drop-divider"></div>
-                  
-                  <div className="drop-stat-row">
-                    <span className="drop-stat-label">Wallet XP:</span>
-                    <span className="drop-stat-val" style={{ color: 'var(--primary)' }}>{isAdmin ? '∞' : totalXp}</span>
-                  </div>
-
-                  {!isAdmin && (
-                    <>
-                      <div className="drop-stat-row" style={{ marginTop: '12px' }}>
-                        <span className="drop-stat-label">Tier Status:</span>
-                        <div style={{ display: 'flex', alignItems: 'center', color: getTier(lifetimeXp, sysConfig).color }}>
-                          <span style={{ fontWeight: '600', textTransform: 'uppercase' }}>{getTier(lifetimeXp, sysConfig).level}</span>
-                        </div>
-                      </div>
-
-                      <div style={{ marginTop: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          <span>{lifetimeXp} XP</span>
-                          <span>Next: {getTierProgress(lifetimeXp, sysConfig).next}</span>
-                        </div>
-                        <div className="progress-bar-bg">
-                          <div 
-                            className="progress-bar-fill" 
-                            style={{ 
-                              width: `${getTierProgress(lifetimeXp, sysConfig).percentage}%`, 
-                              background: getTierProgress(lifetimeXp, sysConfig).color,
-                              boxShadow: `0 0 10px ${getTierProgress(lifetimeXp, sysConfig).color}`
-                            }}
-                          ></div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  <div className="drop-divider" style={{ marginTop: '16px' }}></div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              
+              {/* NEW CART BUTTON FOR PLAYERS */}
+              {!isAdmin && (
+                <div style={{ position: 'relative', marginRight: '16px' }}>
                   <button 
-                    className="claim-btn" 
-                    style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', color: '#fff', border: '1px solid var(--border)', marginTop: '8px' }}
-                    onClick={() => { navigate('/settings/account'); setShowUserMenu(false); }}
+                    className="admin-icon-btn" 
+                    onClick={(e) => { e.stopPropagation(); setShowCartModal(true); setShowUserMenu(false); }} 
+                    style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0', position: 'relative' }}
                   >
-                    <Settings size={14} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }}/> Account Settings
+                    <ShoppingCart size={20} />
+                    {cartItemCount > 0 && (
+                      <span style={{ position: 'absolute', top: '-2px', right: '-2px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {cartItemCount}
+                      </span>
+                    )}
                   </button>
-
                 </div>
               )}
+
+              <div style={{ position: 'relative' }}>
+                <button 
+                  className="admin-icon-btn" 
+                  onClick={(e) => { e.stopPropagation(); setShowUserMenu(!showUserMenu); setShowCartModal(false); }} 
+                  style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0' }}
+                >
+                  <User size={20} />
+                </button>
+
+                {showUserMenu && (
+                  <div className="user-dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                    <div className="drop-header">
+                      <div className="drop-avatar"><User size={24} color="#ccc" /></div>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span className="drop-name">{currentUser.name}</span>
+                        <span className="drop-user">@{currentUser.username}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="drop-divider"></div>
+                    
+                    <div className="drop-stat-row">
+                      <span className="drop-stat-label">Wallet XP:</span>
+                      <span className="drop-stat-val" style={{ color: 'var(--primary)' }}>{isAdmin ? '∞' : totalXp}</span>
+                    </div>
+
+                    {!isAdmin && (
+                      <>
+                        <div className="drop-stat-row" style={{ marginTop: '12px' }}>
+                          <span className="drop-stat-label">Tier Status:</span>
+                          <div style={{ display: 'flex', alignItems: 'center', color: getTier(lifetimeXp, sysConfig).color }}>
+                            <span style={{ fontWeight: '600', textTransform: 'uppercase' }}>{getTier(lifetimeXp, sysConfig).level}</span>
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: '16px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            <span>{lifetimeXp} XP</span>
+                            <span>Next: {getTierProgress(lifetimeXp, sysConfig).next}</span>
+                          </div>
+                          <div className="progress-bar-bg">
+                            <div 
+                              className="progress-bar-fill" 
+                              style={{ 
+                                width: `${getTierProgress(lifetimeXp, sysConfig).percentage}%`, 
+                                background: getTierProgress(lifetimeXp, sysConfig).color,
+                                boxShadow: `0 0 10px ${getTierProgress(lifetimeXp, sysConfig).color}`
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    <div className="drop-divider" style={{ marginTop: '16px' }}></div>
+                    <button 
+                      className="claim-btn" 
+                      style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', color: '#fff', border: '1px solid var(--border)', marginTop: '8px' }}
+                      onClick={() => { navigate('/settings/account'); setShowUserMenu(false); }}
+                    >
+                      <Settings size={14} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }}/> Account Settings
+                    </button>
+
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <button className="claim-btn" onClick={openLoginModal} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '0.8rem' }}>
@@ -1676,10 +2058,12 @@ function AppContent() {
 
         <div className="page-content" onClick={() => showUserMenu && setShowUserMenu(false)}>
           <Routes>
-            <Route path="/" element={<HomeDashboard inventory={inventory} newsList={newsList} />} />
+            <Route path="/" element={<HomeDashboard inventory={inventory} newsList={newsList} topPicks={topPicks} />} />
+            
             <Route path="/shop/foods" element={renderCategoryPage("Foods", "Exchange your XP for snacks.", "foods")} />
             <Route path="/shop/drinks" element={renderCategoryPage("Drinks", "Grab a cold drink to keep grinding.", "drinks")} />
-            <Route path="/battlepass" element={renderCategoryPage("Battle Pass", "Redeem Steam Points, Valorant VP, and more.", "battlepass")} />
+            <Route path="/shop/ecoin" element={renderCategoryPage("E-Coin", "Exchange your Wallet XP to redeem E-Coins.", "ecoin")} />
+            <Route path="/battlepass" element={renderCategoryPage("Battle Pass", "Reach tier requirements by playing to unlock and redeem exclusive rewards.", "battlepass")} />
             
             <Route path="/history" element={<PurchaseHistory currentUser={currentUser} />} />
             <Route path="/settings/account" element={<div style={{ display: 'flex', justifyContent: 'center', paddingTop: '20px' }}><AccountSettings currentUser={currentUser} /></div>} />
@@ -1687,6 +2071,7 @@ function AppContent() {
             {/* ADMIN ROUTES */}
             <Route path="/dashboard" element={isAdmin ? <AdminDashboard /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
             <Route path="/queue" element={isAdmin ? <OrderQueue /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
+            
             <Route path="/settings/log" element={isAdmin ? <AdminLog /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
             <Route path="/settings/accounts" element={isAdmin ? <AccountsList /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
             <Route path="/settings/system" element={isAdmin ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '20px' }}><SystemConfig config={sysConfig} /></div> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />

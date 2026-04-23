@@ -42,7 +42,24 @@ if (!gotTheLock) {
       icon: iconPath, 
       webPreferences: {
         nodeIntegration: true,
-        contextIsolation: false
+        contextIsolation: false,
+        devTools: false,             // 🛡️ SECURITY: Disables Developer Tools
+        backgroundThrottling: false  // ⚡ PERFORMANCE: Keeps XP timer running perfectly when hidden/minimized!
+      }
+    });
+
+    // 🛡️ SECURITY: Completely nukes the top menu bar (File, Edit, View) so they can't access "Toggle Developer Tools"
+    Menu.setApplicationMenu(null);
+
+    // 🛡️ SECURITY: Intercepts and blocks all hacker keyboard shortcuts
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      const isDevToolsShortcut = 
+        (input.key === 'F12') || 
+        (input.control && input.shift && input.key.toLowerCase() === 'i') ||
+        (input.control && input.shift && input.key.toLowerCase() === 'j');
+
+      if (isDevToolsShortcut) {
+        event.preventDefault(); // Blocks the keystroke from doing anything
       }
     });
 
@@ -81,6 +98,7 @@ if (!gotTheLock) {
       { 
         label: 'Exit App', 
         click: function () { 
+          // Note: If you want to stop players from exiting entirely, you can require an admin password here later!
           isQuitting = true; 
           app.quit(); 
         } 
