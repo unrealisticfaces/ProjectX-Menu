@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, Zap, Flame, CalendarDays, Megaphone, Coins } from 'lucide-react';
-import { ref, set, get, child, update, onValue, push, remove, onChildAdded, query, limitToLast } from "firebase/database";
+import { ref, set, get, child, update, onValue, push, remove, onChildAdded, query, limitToLast, orderByChild, equalTo } from "firebase/database";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword } from "firebase/auth";
 import { db, auth } from './firebase'; 
 import toast, { Toaster } from 'react-hot-toast'; 
@@ -32,23 +32,70 @@ const getTierProgress = (lifetimeXp, config) => {
 };
 
 // ==========================================
+// --- LIVE XP HUD (TEASER MODE ENABLED) ---
+// ==========================================
+const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
+  const [pendingXp, setPendingXp] = useState(0);
+
+  useEffect(() => {
+    // Stop the timer for the Admin, let it run for walk-ins
+    if (currentUser?.username === 'admin') {
+      setPendingXp(0);
+      return;
+    }
+    
+    const timer = setInterval(() => {
+      let mult = 1;
+      const d = new Date();
+      const isMidnight = d.getHours() >= 0 && d.getHours() < 6;
+      if ((sysConfig?.boostDays && sysConfig.boostDays[d.getDay()]) || (sysConfig?.enableMidnightBoost && isMidnight)) {
+        mult = sysConfig?.boostMultiplier || 2;
+      }
+      const xpPerSecond = ((sysConfig?.xpPerHour || 1800) / 3600) * mult;
+      setPendingXp(prev => prev + xpPerSecond);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [currentUser, sysConfig]);
+
+  return (
+    <div className="unclaimed-xp-hud">
+      <div className="hud-status-container">
+        <div className="status-dot-pulse"></div>
+        <span className="xp-label">LIVE SESSION XP:</span>
+      </div>
+      <span className="xp-amount">{Math.floor(pendingXp)}</span>
+      <button className="claim-btn" style={{ padding: '4px 10px'}} onClick={() => {
+        if (!currentUser) {
+          toast.error("Create an account or sign in to claim your XP!");
+          return;
+        }
+
+        if(pendingXp > 0) {
+          onClaimXp(Math.floor(pendingXp));
+          setPendingXp(0);
+        } else {
+          toast.error("No XP to claim yet.");
+        }
+      }}>Claim</button>
+    </div>
+  );
+};
+
+// ==========================================
 // --- LIVE ACTIVITY WIDGET ---
 // ==========================================
 const RecentActivityWidget = () => {
   const [activities, setActivities] = useState([]);
 
   useEffect(() => {
-    const usersRef = ref(db, 'users');
-    const unsubscribe = onValue(usersRef, (snapshot) => {
+    const q = query(ref(db, 'orders'), limitToLast(20));
+    const unsubscribe = onValue(q, (snapshot) => {
       if(snapshot.exists()) {
         let allActivity = [];
-        Object.entries(snapshot.val()).forEach(([username, data]) => {
-          if(data.purchases) {
-            Object.entries(data.purchases).forEach(([timestampKey, p]) => {
-              if(p.status === 'completed') {
-                 allActivity.push({ username, item: p.item, time: parseInt(timestampKey) });
-              }
-            });
+        Object.values(snapshot.val()).forEach((p) => {
+          if(p.status === 'completed') {
+             allActivity.push({ username: p.username, item: p.item, time: p.timestamp });
           }
         });
         allActivity.sort((a, b) => b.time - a.time);
@@ -142,7 +189,6 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
     if (inventory?.drinks && Object.values(inventory.drinks).length > 0) featuredItems.push({...Object.values(inventory.drinks)[0], categoryId: 'drinks'});
   }
 
-  // --- RENDER BLOCKS ---
   const renderAnnouncements = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
       <h3 style={{ color: '#fff', fontSize: '1.1rem', margin: '0', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -200,11 +246,7 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
         <Zap size={20} color="#3b82f6" /> Quick Tips
       </h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-        
-        <div 
-          className="card"
-          style={{ background: 'linear-gradient(to right, rgba(59, 130, 246, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}
-        >
+        <div className="card" style={{ background: 'linear-gradient(to right, rgba(59, 130, 246, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}>
           <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Zap size={18} color="#3b82f6" />
           </div>
@@ -218,11 +260,7 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
             </p>
           </div>
         </div>
-
-        <div 
-          className="card"
-          style={{ background: 'linear-gradient(to right, rgba(168, 85, 247, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(168, 85, 247, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}
-        >
+        <div className="card" style={{ background: 'linear-gradient(to right, rgba(168, 85, 247, 0.1), rgba(0,0,0,0.6))', border: '1px solid rgba(168, 85, 247, 0.2)', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'flex-start', gap: '16px', flex: 1 }}>
           <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(168, 85, 247, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Zap size={18} color="#a855f7" />
           </div>
@@ -236,7 +274,6 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
             </p>
           </div>
         </div>
-
       </div>
     </div>
   );
@@ -276,10 +313,7 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
         </div>
       </div>
 
-      {/* INDEPENDENT COLUMNS GRID: Fixes stretching and box leveling natively */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px', alignItems: 'stretch' }}>
-        
-        {/* LEFT COLUMN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {newsList?.length > 0 ? (
             <>
@@ -293,8 +327,6 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
             </>
           )}
         </div>
-
-        {/* RIGHT COLUMN */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', flex: 1 }}>
             <LeaderboardWidget layout="vertical" />
@@ -303,7 +335,6 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
             <RecentActivityWidget />
           </div>
         </div>
-
       </div>
     </div>
   );
@@ -745,45 +776,44 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     get(child(ref(db), 'users')).then((snapshot) => {
+      let onlineCount = 0;
+      let userCount = 0;
       if (snapshot.exists()) {
-        const usersObj = snapshot.val();
-        let onlineCount = 0;
+        Object.entries(snapshot.val()).forEach(([username, data]) => {
+          if (username !== 'admin') {
+            userCount++;
+            if (data.isOnline) onlineCount++;
+          }
+        });
+      }
+      setStats(s => ({ ...s, online: onlineCount, totalUsers: userCount }));
+    });
+
+    const q = query(ref(db, 'orders'), limitToLast(200));
+    get(q).then((snapshot) => {
+      if (snapshot.exists()) {
         let approvedCount = 0;
-        let userCount = 0;
-        
         const trendMap = {};
         for(let i=6; i>=0; i--) {
           const d = new Date();
           d.setDate(d.getDate() - i);
           trendMap[d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })] = 0;
         }
-
         const productMap = {};
 
-        Object.entries(usersObj).forEach(([username, data]) => {
-          if (username !== 'admin') {
-            userCount++;
-            if (data.isOnline) onlineCount++;
-            if (data.purchases) {
-              Object.entries(data.purchases).forEach(([timestampKey, p]) => {
-                if (p.status === 'completed') {
-                  approvedCount++;
-                  const pDate = new Date(parseInt(timestampKey)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                  if (trendMap[pDate] !== undefined) { trendMap[pDate]++; }
-                  productMap[p.item] = (productMap[p.item] || 0) + 1;
-                }
-              });
-            }
+        Object.values(snapshot.val()).forEach((p) => {
+          if (p.status === 'completed') {
+            approvedCount++;
+            const pDate = new Date(p.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            if (trendMap[pDate] !== undefined) { trendMap[pDate]++; }
+            productMap[p.item] = (productMap[p.item] || 0) + 1;
           }
         });
 
-        setStats({ online: onlineCount, approvedClaims: approvedCount, totalUsers: userCount });
+        setStats(s => ({ ...s, approvedClaims: approvedCount }));
         setTrendData(Object.entries(trendMap).map(([date, claims]) => ({ date, claims })));
         
-        const sortedPie = Object.entries(productMap)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([name, value]) => ({ name, value }));
+        const sortedPie = Object.entries(productMap).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, value]) => ({ name, value }));
         setPieData(sortedPie);
       }
     });
@@ -866,36 +896,25 @@ const OrderQueue = () => {
   const itemsPerPage = 10;
 
   useEffect(() => {
-    get(child(ref(db), 'users')).then((snapshot) => {
+    get(child(ref(db), 'orders')).then((snapshot) => {
       if (snapshot.exists()) {
-        const usersObj = snapshot.val();
-        let purchasesArr = [];
-        Object.entries(usersObj).forEach(([username, data]) => {
-          if (username !== 'admin' && data.purchases) {
-            Object.entries(data.purchases).forEach(([timestampKey, p]) => {
-              purchasesArr.push({ ...p, username, name: data?.name || 'Unknown', timestampKey: parseInt(timestampKey) });
-            });
-          }
-        });
-        purchasesArr.sort((a, b) => b.timestampKey - a.timestampKey);
+        const ordersObj = snapshot.val();
+        let purchasesArr = Object.entries(ordersObj).map(([key, data]) => ({ ...data, orderId: key }));
+        purchasesArr.sort((a, b) => b.timestamp - a.timestamp);
         setAllPurchases(purchasesArr);
       }
     });
   }, []);
 
-  const handleFulfillOrder = async (username, timestampKey, itemName) => {
+  const handleFulfillOrder = async (orderId, username, itemName) => {
     try {
-      await update(ref(db, `users/${username}/purchases/${timestampKey}`), { status: 'completed' });
+      await update(ref(db, `orders/${orderId}`), { status: 'completed' });
       toast.success(`Approved ${itemName} for @${username}!`);
-      setAllPurchases(prev => prev.map(p => 
-        p.timestampKey === timestampKey && p.username === username ? { ...p, status: 'completed' } : p
-      ));
-    } catch (error) {
-      toast.error("Failed to approve order.");
-    }
+      setAllPurchases(prev => prev.map(p => p.orderId === orderId ? { ...p, status: 'completed' } : p));
+    } catch (error) { toast.error("Failed to approve order."); }
   };
 
-  const handleDeclineOrder = async (username, timestampKey, price, itemName) => {
+  const handleDeclineOrder = async (orderId, username, price, itemName) => {
     try {
       const userRef = ref(db, `users/${username}`);
       const snapshot = await get(userRef);
@@ -903,15 +922,13 @@ const OrderQueue = () => {
         const userData = snapshot.val();
         const refundedXp = (userData.xp || 0) + price;
         
-        await update(userRef, {
-          xp: refundedXp,
-          [`purchases/${timestampKey}/status`]: 'declined'
+        await update(ref(db), {
+          [`users/${username}/xp`]: refundedXp,
+          [`orders/${orderId}/status`]: 'declined'
         });
         
-        toast.success(`Declined ${itemName}. Refunded ${price} XP to @${username}.`);
-        setAllPurchases(prev => prev.map(p => 
-          p.timestampKey === timestampKey && p.username === username ? { ...p, status: 'declined' } : p
-        ));
+        toast.success(`Declined ${itemName}. Refunded ${price} XP.`);
+        setAllPurchases(prev => prev.map(p => p.orderId === orderId ? { ...p, status: 'declined' } : p));
       }
     } catch (error) { toast.error("Failed to decline order."); }
   };
@@ -945,10 +962,10 @@ const OrderQueue = () => {
                     <td>
                       {isPending ? (
                         <div style={{ display: 'flex', gap: '6px' }}>
-                          <button className="claim-btn" style={{ padding: '4px 8px', fontSize: '0.7rem', background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', border: '1px solid rgba(34, 197, 94, 0.3)' }} onClick={() => handleFulfillOrder(p.username, p.timestampKey, p.item)}>
+                          <button className="claim-btn" style={{ padding: '4px 8px', fontSize: '0.7rem', background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', border: '1px solid rgba(34, 197, 94, 0.3)' }} onClick={() => handleFulfillOrder(p.orderId, p.username, p.item)}>
                             Approve
                           </button>
-                          <button className="claim-btn" style={{ padding: '4px 8px', fontSize: '0.7rem', background: 'transparent', border: '1px solid #ef4444', color: '#ef4444' }} onClick={() => handleDeclineOrder(p.username, p.timestampKey, p.price, p.item)}>
+                          <button className="claim-btn" style={{ padding: '4px 8px', fontSize: '0.7rem', background: 'transparent', border: '1px solid #ef4444', color: '#ef4444' }} onClick={() => handleDeclineOrder(p.orderId, p.username, p.price, p.item)}>
                             Decline
                           </button>
                         </div>
@@ -1026,9 +1043,7 @@ const AdminLog = () => {
 const AccountsList = () => {
   const [users, setUsers] = useState({});
   const [search, setSearch] = useState('');
-  
   const [editUserModal, setEditUserModal] = useState({ open: false, username: '', name: '', password: '' });
-  
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
@@ -1040,10 +1055,8 @@ const AccountsList = () => {
 
   const handleSaveUser = async (e) => {
     e.preventDefault();
-    
     try {
       await update(ref(db, `users/${editUserModal.username}`), { name: editUserModal.name });
-      
       setUsers(prev => ({ ...prev, [editUserModal.username]: { ...prev[editUserModal.username], name: editUserModal.name } }));
       const newLogRef = push(ref(db, 'admin_logs'));
       await set(newLogRef, { action: `Updated account details for @${editUserModal.username}`, timestamp: new Date().toLocaleString() });
@@ -1056,18 +1069,13 @@ const AccountsList = () => {
     if (window.confirm(`Are you absolutely sure you want to permanently delete the account @${username}?`)) {
       try {
         await remove(ref(db, `users/${username}`));
-        
         const newUsers = { ...users };
         delete newUsers[username];
         setUsers(newUsers);
-
         const newLogRef = push(ref(db, 'admin_logs'));
         await set(newLogRef, { action: `Deleted user account: @${username}`, timestamp: new Date().toLocaleString() });
-
         toast.success(`Account @${username} has been deleted.`);
-      } catch (error) {
-        toast.error("Failed to delete user account.");
-      }
+      } catch (error) { toast.error("Failed to delete user account."); }
     }
   };
 
@@ -1104,12 +1112,8 @@ const AccountsList = () => {
               <td style={{ color: 'var(--primary)', fontFamily: 'monospace', fontWeight: 'bold' }}>{data.xp || 0} XP</td>
               <td>
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  <button className="admin-icon-btn" onClick={() => setEditUserModal({ open: true, username: username, name: data?.name || '', password: '' })} title="Edit User">
-                    <Edit size={14}/>
-                  </button>
-                  <button className="admin-icon-btn" onClick={() => handleDeleteUser(username)} title="Delete User">
-                    <Trash2 size={14} color="#ef4444" />
-                  </button>
+                  <button className="admin-icon-btn" onClick={() => setEditUserModal({ open: true, username: username, name: data?.name || '', password: '' })} title="Edit User"><Edit size={14}/></button>
+                  <button className="admin-icon-btn" onClick={() => handleDeleteUser(username)} title="Delete User"><Trash2 size={14} color="#ef4444" /></button>
                 </div>
               </td>
             </tr>
@@ -1158,10 +1162,11 @@ const PurchaseHistory = ({ currentUser }) => {
 
   useEffect(() => {
     if (currentUser) {
-      const pRef = ref(db, `users/${currentUser.username}/purchases`);
-      const unsubscribe = onValue(pRef, (snapshot) => {
+      const q = query(ref(db, 'orders'), orderByChild('username'), equalTo(currentUser.username));
+      const unsubscribe = onValue(q, (snapshot) => {
         if (snapshot.exists()) {
-          setHistory(Object.entries(snapshot.val()).map(([key, data]) => ({ ...data, timestampKey: key })).reverse());
+          const arr = Object.values(snapshot.val()).sort((a, b) => b.timestamp - a.timestamp);
+          setHistory(arr);
         } else {
           setHistory([]);
         }
@@ -1217,8 +1222,6 @@ function AppContent() {
   const [currentUser, setCurrentUser] = useState(null); 
   const [totalXp, setTotalXp] = useState(0); 
   const [lifetimeXp, setLifetimeXp] = useState(0);
-
-  const [rawPendingXp, setRawPendingXp] = useState(0); 
   
   const [sysConfig, setSysConfig] = useState({ 
     silverXp: 2000, 
@@ -1233,9 +1236,7 @@ function AppContent() {
   useEffect(() => { sysConfigRef.current = sysConfig; }, [sysConfig]);
 
   const [newsList, setNewsList] = useState([]);
-  
   const [topPicks, setTopPicks] = useState([]);
-  
   const [cart, setCart] = useState([]);
   const [showCartModal, setShowCartModal] = useState(false);
 
@@ -1243,7 +1244,6 @@ function AppContent() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [isLoginView, setIsLoginView] = useState(true);
-  const [isWebMode, setIsWebMode] = useState(false);
   const [authForm, setAuthForm] = useState({ name: '', username: '', password: '' });
 
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -1263,57 +1263,38 @@ function AppContent() {
   const isSettingsActive = location.pathname.startsWith('/settings');
   const isAdmin = currentUser?.username === 'admin';
 
+  // Fetch Inventory
   useEffect(() => {
-    const usersRef = ref(db, 'users');
-    const unsubscribe = onValue(usersRef, (snapshot) => {
+    const invRef = ref(db, 'inventory');
+    const unsubscribe = onValue(invRef, async (snapshot) => {
       if (snapshot.exists()) {
-        const usersObj = snapshot.val();
+        setInventory(snapshot.val());
+      } else {
+        const defaultInv = { foods: {}, drinks: {}, battlepass: {}, ecoin: {} };
+        await set(ref(db, 'inventory'), defaultInv);
+        setInventory(defaultInv);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // OPTIMIZATION: Caps memory usage to the last 50 orders
+  useEffect(() => {
+    const q = query(ref(db, 'orders'), limitToLast(50));
+    const unsubscribe = onValue(q, (snapshot) => {
+      if (snapshot.exists()) {
         const productCounts = {};
-        Object.values(usersObj).forEach(user => {
-          if (user.purchases) {
-            Object.values(user.purchases).forEach(p => {
-              if (p.status === 'completed') {
-                productCounts[p.item] = (productCounts[p.item] || 0) + 1;
-              }
-            });
-          }
+        Object.values(snapshot.val()).forEach(p => {
+          if (p.status === 'completed') productCounts[p.item] = (productCounts[p.item] || 0) + 1;
         });
-        const sorted = Object.entries(productCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 3)
-          .map(entry => entry[0]);
+        const sorted = Object.entries(productCounts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(entry => entry[0]);
         setTopPicks(sorted);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    const configRef = ref(db, 'config');
-    const unsubscribe = onValue(configRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const dbConfig = snapshot.val();
-        setSysConfig({
-          silverXp: dbConfig.silverXp || 2000,
-          goldXp: dbConfig.goldXp || 5000,
-          xpPerHour: dbConfig.xpPerHour || 1800,
-          boostDays: dbConfig.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
-          enableMidnightBoost: dbConfig.enableMidnightBoost || false,
-          boostMultiplier: dbConfig.boostMultiplier || 2
-        });
-      } else {
-        const defConfig = { 
-          silverXp: 2000, goldXp: 5000, xpPerHour: 1800, 
-          boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
-          enableMidnightBoost: false, boostMultiplier: 2 
-        };
-        set(configRef, defConfig);
-        setSysConfig(defConfig);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
+  // Fetch News
   useEffect(() => {
     const newsRef = ref(db, 'news');
     const unsubscribe = onValue(newsRef, (snapshot) => {
@@ -1327,6 +1308,26 @@ function AppContent() {
     return () => unsubscribe();
   }, []);
 
+  // Fetch Config
+  useEffect(() => {
+    const configRef = ref(db, 'config');
+    const unsubscribe = onValue(configRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const dbConfig = snapshot.val();
+        setSysConfig({
+          silverXp: dbConfig.silverXp || 2000,
+          goldXp: dbConfig.goldXp || 5000,
+          xpPerHour: dbConfig.xpPerHour || 1800,
+          boostDays: dbConfig.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+          enableMidnightBoost: dbConfig.enableMidnightBoost || false,
+          boostMultiplier: dbConfig.boostMultiplier || 2
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch Current User Data
   useEffect(() => {
     if (currentUser && !isAdmin) {
       const userRef = ref(db, `users/${currentUser.username}`);
@@ -1341,48 +1342,7 @@ function AppContent() {
     }
   }, [currentUser, isAdmin]);
 
-  useEffect(() => {
-    const scrollContainer = document.querySelector('.page-content');
-    if (!scrollContainer) return;
-
-    let isScrolling = false;
-    let targetY = scrollContainer.scrollTop;
-    let currentY = scrollContainer.scrollTop;
-    const ease = 0.08; 
-    let animationFrame;
-
-    const updateScroll = () => {
-      const distance = targetY - currentY;
-      if (Math.abs(distance) < 0.5) {
-        currentY = targetY;
-        scrollContainer.scrollTop = currentY;
-        isScrolling = false;
-        return;
-      }
-      currentY += distance * ease;
-      scrollContainer.scrollTop = currentY;
-      animationFrame = requestAnimationFrame(updateScroll);
-    };
-
-    const handleWheel = (e) => {
-      e.preventDefault();
-      targetY += e.deltaY * 0.4; 
-      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-      targetY = Math.max(0, Math.min(targetY, maxScroll));
-      if (!isScrolling) {
-        isScrolling = true;
-        currentY = scrollContainer.scrollTop;
-        updateScroll();
-      }
-    };
-
-    scrollContainer.addEventListener('wheel', handleWheel, { passive: false });
-    return () => {
-      scrollContainer.removeEventListener('wheel', handleWheel);
-      if (animationFrame) cancelAnimationFrame(animationFrame);
-    };
-  }, [location.pathname]); 
-
+  // Admin Notification
   useEffect(() => {
     if (isAdmin) {
       const q = query(ref(db, 'live_notifications'), limitToLast(1));
@@ -1390,9 +1350,7 @@ function AppContent() {
         const notif = snapshot.val();
         if (Date.now() - (notif?.time || 0) < 5000) {
           toast(`New Order: @${notif?.username || 'Unknown'} wants ${notif?.item || 'an item'}!`, {
-            icon: '🔔',
-            style: { background: 'var(--primary)', color: '#fff', fontWeight: 'bold' },
-            duration: 6000
+            icon: '🔔', style: { background: 'var(--primary)', color: '#fff', fontWeight: 'bold' }, duration: 6000
           });
         }
       });
@@ -1400,11 +1358,7 @@ function AppContent() {
     }
   }, [isAdmin]);
 
-  const logAction = async (actionDesc) => {
-    const newLogRef = push(ref(db, 'admin_logs'));
-    await set(newLogRef, { action: actionDesc, timestamp: new Date().toLocaleString() });
-  };
-
+  // Admin Logout Check
   useEffect(() => {
     if (isAdmin) {
       const sessionRef = ref(db, 'admin_session/token');
@@ -1422,111 +1376,55 @@ function AppContent() {
     }
   }, [isAdmin, navigate]);
 
-  useEffect(() => {
-    const invRef = ref(db, 'inventory');
-    const unsubscribe = onValue(invRef, async (snapshot) => {
-      if (snapshot.exists()) {
-        setInventory(snapshot.val());
-      } else {
-        const defaultInv = {
-          foods: {}, drinks: {}, battlepass: {}, ecoin: {}
-        };
-        await set(ref(db, 'inventory'), defaultInv);
-        setInventory(defaultInv);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    let os;
-    try { os = window.require('os'); } catch (e) { setIsWebMode(true); }
-    
-    const timer = setInterval(() => {
-      const config = sysConfigRef.current;
-      let mult = 1;
-      
-      const d = new Date();
-      const day = d.getDay(); 
-      const isMidnight = d.getHours() >= 0 && d.getHours() < 6; 
-
-      const isBoostDay = config?.boostDays && config.boostDays[day];
-
-      if (isBoostDay || (config?.enableMidnightBoost && isMidnight)) {
-        mult = config?.boostMultiplier || 2; 
-      }
-
-      const baseRate = config?.xpPerHour ? (config.xpPerHour / 3600) : 0.5;
-      const xpPerSecond = baseRate * mult;
-      
-      setRawPendingXp((prev) => prev + xpPerSecond);
-    }, 1000);
-    
-    return () => clearInterval(timer);
-  }, []);
-
-  const pendingXp = Math.floor(rawPendingXp);
+  const logAction = async (actionDesc) => {
+    const newLogRef = push(ref(db, 'admin_logs'));
+    await set(newLogRef, { action: actionDesc, timestamp: new Date().toLocaleString() });
+  };
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
     const dbRef = ref(db);
-    
     const safeUsername = authForm.username.trim().toLowerCase();
     const systemEmail = `${safeUsername}@4ggamers.local`; 
 
     try {
       if (isLoginView) {
         await signInWithEmailAndPassword(auth, systemEmail, authForm.password);
-        
         const snapshot = await get(child(dbRef, `users/${safeUsername}`));
+        
         if (snapshot.exists()) {
           const data = snapshot.val();
           setCurrentUser({ username: safeUsername, name: data?.name || 'Unknown' });
           setTotalXp(data.xp || 0);
           setLifetimeXp(data.lifetimeXp !== undefined ? data.lifetimeXp : (data.xp || 0));
-          setRawPendingXp(0); 
           setCart([]); 
-          
           setShowLoginModal(false);
           await update(ref(db, `users/${safeUsername}`), { isOnline: true });
-          
-          // 1. First, show the success toast
           toast.success(`Welcome back, ${data?.name || 'Player'}!`);
 
-          if (safeUsername === 'admin') {
+          const adminCheck = await get(child(dbRef, `admins/${safeUsername}`));
+          const isSecureAdmin = adminCheck.exists() && adminCheck.val() === true;
+
+          if (isSecureAdmin || safeUsername === 'admin') { 
             const token = Math.random().toString(36).substr(2);
             localStorage.setItem('adminToken', token);
-            
-            // 2. Wrap the session tracker in its own try/catch to prevent the double-toast bug
-            try {
-              await set(ref(db, 'admin_session'), { token });
-            } catch (sessionErr) {
-              console.warn("Minor issue: DB rules blocked admin_session write, skipping to prevent crash.", sessionErr);
-            }
-            
-            // 3. Continue to dashboard safely
+            try { await set(ref(db, 'admin_session'), { token }); } catch (sessionErr) {}
             navigate('/dashboard');
           }
         }
       } else {
         if (!authForm.name || !authForm.username || !authForm.password) { toast.error("Please fill all fields."); return; }
-        
         if (safeUsername.includes(' ')) { toast.error("Username cannot contain spaces."); return; }
-
-        if (safeUsername.includes('admin') && safeUsername !== 'admin') { 
-          toast.error("You cannot use the word 'admin' in your username."); return; 
-        }
+        if (safeUsername.includes('admin') && safeUsername !== 'admin') { toast.error("You cannot use the word 'admin' in your username."); return; }
 
         const snapshot = await get(child(dbRef, `users/${safeUsername}`));
         if (snapshot.exists()) { toast.error("Username already taken!"); } 
         else {
           await createUserWithEmailAndPassword(auth, systemEmail, authForm.password);
-          
           await set(ref(db, `users/${safeUsername}`), { name: authForm.name, xp: 0, lifetimeXp: 0, isOnline: true });
           setCurrentUser({ username: safeUsername, name: authForm.name });
           setTotalXp(0);
           setLifetimeXp(0);
-          setRawPendingXp(0);
           setCart([]);
           setShowLoginModal(false);
           toast.success("Account created and logged in!");
@@ -1540,9 +1438,7 @@ function AppContent() {
   };
 
   const handleLogout = async () => {
-    if (currentUser) {
-      await update(ref(db, `users/${currentUser.username}`), { isOnline: false });
-    }
+    if (currentUser) await update(ref(db, `users/${currentUser.username}`), { isOnline: false });
     setCurrentUser(null);
     setTotalXp(0);
     setLifetimeXp(0);
@@ -1554,60 +1450,52 @@ function AppContent() {
 
   const openLoginModal = () => { setIsLoginView(true); setShowLoginModal(true); };
 
-  const claimXp = () => {
-    if (!currentUser) { openLoginModal(); return; }
-    if (pendingXp > 0) {
-      const newTotal = totalXp + pendingXp;
-      const newLifetime = lifetimeXp + pendingXp;
-      
-      setTotalXp(newTotal);
-      setLifetimeXp(newLifetime);
-      
-      setRawPendingXp(0);
-      
-      update(ref(db, `users/${currentUser.username}`), { xp: newTotal, lifetimeXp: newLifetime });
-      toast.success(`Claimed ${pendingXp} XP!`);
-    } else { toast.error("No XP to claim yet."); }
+  const claimXp = (amount) => {
+    if (!currentUser) return;
+    const newTotal = totalXp + amount;
+    const newLifetime = lifetimeXp + amount;
+    setTotalXp(newTotal);
+    setLifetimeXp(newLifetime);
+    update(ref(db, `users/${currentUser.username}`), { xp: newTotal, lifetimeXp: newLifetime });
+    toast.success(`Claimed ${amount} XP!`);
   };
 
   const handleAddToCart = (item, price) => {
     if (!currentUser) { openLoginModal(); return; }
     setCart(prev => {
       const existing = prev.find(c => c.item === item);
-      if (existing) {
-        return prev.map(c => c.item === item ? { ...c, quantity: c.quantity + 1 } : c);
-      }
+      if (existing) return prev.map(c => c.item === item ? { ...c, quantity: c.quantity + 1 } : c);
       return [...prev, { item, price, quantity: 1, id: Date.now() + Math.random() }];
     });
     toast.success(`${item} added to cart!`);
   };
 
-  const handleRemoveFromCart = (id) => {
-    setCart(prev => prev.filter(c => c.id !== id));
-  };
+  const handleRemoveFromCart = (id) => setCart(prev => prev.filter(c => c.id !== id));
 
   const handleCheckout = async () => {
-    if (!currentUser) return;
-    if (cart.length === 0) return;
-
+    if (!currentUser || cart.length === 0) return;
     const cartTotal = cart.reduce((sum, current) => sum + (current.price * current.quantity), 0);
 
     if (totalXp >= cartTotal) {
       const newTotal = totalXp - cartTotal;
       setTotalXp(newTotal); 
-      
-      const timestamp = new Date().toLocaleString(); 
+      const timestampStr = new Date().toLocaleString(); 
+      const timestampInt = Date.now();
       const updates = {};
       
       updates[`users/${currentUser.username}/xp`] = newTotal;
 
-      let timeBase = Date.now();
+      let timeBase = timestampInt;
       cart.forEach((cartItem) => {
         for(let i = 0; i < cartItem.quantity; i++) {
-          updates[`users/${currentUser.username}/purchases/${timeBase++}`] = { 
+          const orderId = `${timeBase++}`;
+          updates[`orders/${orderId}`] = { 
+            username: currentUser.username,
+            name: currentUser.name,
             item: cartItem.item, 
             price: cartItem.price, 
-            date: timestamp, 
+            date: timestampStr, 
+            timestamp: timestampInt,
             status: 'pending' 
           };
         }
@@ -1631,42 +1519,44 @@ function AppContent() {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => { setEditForm({ ...editForm, file: reader.result }); };
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 400; 
+          const scaleSize = MAX_WIDTH / img.width;
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * scaleSize;
+          
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+          setEditForm({ ...editForm, file: compressedBase64 });
+        };
+        img.src = event.target.result;
+      };
       reader.readAsDataURL(file);
     }
   };
 
   const saveProduct = async (e) => {
     e.preventDefault();
-    if (!editForm.file) { toast.error("Please upload an image or provide a filename."); return; }
-
+    if (!editForm.file) { toast.error("Please upload an image."); return; }
     const cat = editorModal.category;
     let targetId = editorModal.mode === 'edit' ? editorModal.item?.id : `prod_${Date.now()}`;
-    
-    const productData = {
-      id: targetId,
-      name: editForm.name,
-      price: parseInt(editForm.price),
-      file: editForm.file,
-      inStock: editForm.inStock === 'true',
-      requiredTier: editForm.requiredTier || 'none'
-    };
-
+    const productData = { id: targetId, name: editForm.name, price: parseInt(editForm.price), file: editForm.file, inStock: editForm.inStock === 'true', requiredTier: editForm.requiredTier || 'none' };
     await set(ref(db, `inventory/${cat}/${targetId}`), productData);
     await logAction(`${editorModal.mode === 'edit' ? 'Updated' : 'Added'} product: ${editForm.name} in ${cat}`);
     toast.success(`Product saved!`);
     setEditorModal({ open: false, mode: 'add', category: '', item: null });
   };
 
-  const requestDelete = (cat, id) => {
-    const itemName = inventory[cat][id]?.name || 'Unknown';
-    setDeleteModal({ open: true, category: cat, id, name: itemName });
-  };
-
+  const requestDelete = (cat, id) => setDeleteModal({ open: true, category: cat, id, name: inventory[cat][id]?.name || 'Unknown' });
+  
   const confirmDelete = async () => {
-    const { category, id, name } = deleteModal;
-    await remove(ref(db, `inventory/${category}/${id}`));
-    await logAction(`Deleted product: ${name} from ${category}`);
+    await remove(ref(db, `inventory/${deleteModal.category}/${deleteModal.id}`));
+    await logAction(`Deleted product: ${deleteModal.name} from ${deleteModal.category}`);
     toast.success("Item removed.");
     setDeleteModal({ open: false, category: '', id: '', name: '' });
   };
@@ -1688,35 +1578,11 @@ function AppContent() {
       <div style={{ position: 'relative', textAlign: 'center', marginBottom: '24px' }}>
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{title}</h1>
         <p className="page-desc" style={{ margin: 0, fontSize: '0.85rem' }}>{desc}</p>
-        
-        {isAdmin && (
-          <button 
-            className="claim-btn" 
-            style={{ position: 'absolute', right: '0', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '8px', alignItems: 'center' }} 
-            onClick={() => openEditor('add', catKey)}
-          >
-            <Plus size={16}/> Add New
-          </button>
-        )}
+        {isAdmin && <button className="claim-btn" style={{ position: 'absolute', right: '0', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '8px', alignItems: 'center' }} onClick={() => openEditor('add', catKey)}><Plus size={16}/> Add New</button>}
       </div>
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.values(inventory[catKey] || {}).map(item => (
-          <ProductCard 
-            key={item.id} 
-            item={item} 
-            totalXp={totalXp} 
-            lifetimeXp={lifetimeXp} 
-            config={sysConfig}
-            currentUser={currentUser} 
-            onAddToCart={handleAddToCart} 
-            onLockedClick={() => setShowTierGuide(true)}
-            categoryId={catKey} 
-            isAdmin={isAdmin} 
-            onEdit={openEditor} 
-            onDelete={requestDelete} 
-            onToggleStock={toggleStock} 
-            topPicks={topPicks} 
-          />
+          <ProductCard key={item.id} item={item} totalXp={totalXp} lifetimeXp={lifetimeXp} config={sysConfig} currentUser={currentUser} onAddToCart={handleAddToCart} onLockedClick={() => setShowTierGuide(true)} categoryId={catKey} isAdmin={isAdmin} onEdit={openEditor} onDelete={requestDelete} onToggleStock={toggleStock} topPicks={topPicks} />
         ))}
       </div>
     </>
@@ -1729,10 +1595,9 @@ function AppContent() {
     <div className="app-container" onClick={() => showUserMenu && setShowUserMenu(false)}>
       <Toaster position="bottom-right" toastOptions={{ style: { background: 'var(--bg-elevated)', color: '#fff', border: '1px solid var(--border)', fontSize: '13px', borderRadius: '8px' }, success: { iconTheme: { primary: 'var(--primary)', secondary: '#ffffff' } }, error: { iconTheme: { primary: '#ef4444', secondary: '#ffffff' } } }} />
 
-      {/* TIER GUIDE MODAL */}
+      {/* MODALS */}
       {showTierGuide && <TierGuideModal config={sysConfig} onClose={() => setShowTierGuide(false)} />}
 
-      {/* LOGIN MODAL */}
       {showLoginModal && (
         <div className="modal-overlay" onClick={() => setShowLoginModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1740,14 +1605,12 @@ function AppContent() {
               <button className="close-modal" onClick={() => setShowLoginModal(false)}><X size={20}/></button>
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}><img src="./images/logo/logo2.png" alt="Logo" style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '8px' }} /></div>
               <h2 style={{ textAlign: 'center', marginBottom: '24px', fontSize: '1.5rem', color: '#fff' }}>{isLoginView ? 'Sign In' : 'Create Account'}</h2>
-              
               <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {!isLoginView && <div className="sleek-input-container"><input type="text" placeholder="Full Name" className="sleek-input" style={{ fontSize: '0.85rem' }} required onChange={e => setAuthForm({...authForm, name: e.target.value})} /><BadgeCheck size={16} className="sleek-icon" /></div>}
-                <div className="sleek-input-container"><input type="text" placeholder="Username" className="sleek-input" style={{ fontSize: '0.85rem' }} required onChange={e => setAuthForm({...authForm, username: e.target.value})} /><User size={16} className="sleek-icon" /></div>
-                <div className="sleek-input-container"><input type="password" placeholder="Password" className="sleek-input" style={{ fontSize: '0.85rem' }} required onChange={e => setAuthForm({...authForm, password: e.target.value})} /><Lock size={16} className="sleek-icon" /></div>
-                <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px', width: '100%' }}>{isLoginView ? 'Sign In' : 'Sign Up'}</button>
+                {!isLoginView && <div className="sleek-input-container"><input type="text" placeholder="Full Name" className="sleek-input" required onChange={e => setAuthForm({...authForm, name: e.target.value})} /><BadgeCheck size={16} className="sleek-icon" /></div>}
+                <div className="sleek-input-container"><input type="text" placeholder="Username" className="sleek-input" required onChange={e => setAuthForm({...authForm, username: e.target.value})} /><User size={16} className="sleek-icon" /></div>
+                <div className="sleek-input-container"><input type="password" placeholder="Password" className="sleek-input" required onChange={e => setAuthForm({...authForm, password: e.target.value})} /><Lock size={16} className="sleek-icon" /></div>
+                <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px' }}>{isLoginView ? 'Sign In' : 'Sign Up'}</button>
               </form>
-
               <div style={{ marginTop: '20px', textAlign: 'center' }}>
                 <span style={{ color: '#52525b', fontSize: '0.85rem' }}>{isLoginView ? "Don't have an account? " : "Already have an account? "}</span>
                 <button onClick={() => setIsLoginView(!isLoginView)} style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem' }}>{isLoginView ? "Register here" : "Sign in"}</button>
@@ -1757,7 +1620,6 @@ function AppContent() {
         </div>
       )}
 
-      {/* CART MODAL */}
       {showCartModal && (
         <div className="modal-overlay" onClick={() => setShowCartModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
@@ -1767,20 +1629,12 @@ function AppContent() {
                 <ShoppingCart size={24} color="var(--primary)" />
                 <h2 style={{ color: '#fff', fontSize: '1.3rem', margin: 0 }}>Your Cart</h2>
               </div>
-
-              {cart.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>
-                  Your cart is currently empty.
-                </div>
-              ) : (
+              {cart.length === 0 ? (<div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>Your cart is currently empty.</div>) : (
                 <>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', paddingRight: '8px' }} className="custom-scrollbar">
                     {cart.map((cartItem) => (
                       <div key={cartItem.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                        <span style={{ color: '#fff', fontSize: '0.9rem' }}>
-                          {cartItem.quantity > 1 && <span style={{ color: 'var(--primary)', fontWeight: 'bold', marginRight: '6px' }}>{cartItem.quantity}x</span>}
-                          {cartItem.item}
-                        </span>
+                        <span style={{ color: '#fff', fontSize: '0.9rem' }}>{cartItem.quantity > 1 && <span style={{ color: 'var(--primary)', fontWeight: 'bold', marginRight: '6px' }}>{cartItem.quantity}x</span>}{cartItem.item}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <span style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '0.85rem' }}>{cartItem.price * cartItem.quantity} XP</span>
                           <button className="admin-icon-btn" onClick={() => handleRemoveFromCart(cartItem.id)}><X size={16} color="#ef4444" /></button>
@@ -1788,22 +1642,9 @@ function AppContent() {
                       </div>
                     ))}
                   </div>
-                  
                   <div style={{ height: '1px', background: 'var(--border)', margin: '20px 0' }}></div>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Total Cost:</span>
-                    <span style={{ color: '#fff', fontSize: '1.2rem', fontWeight: 'bold' }}>{cartTotal} XP</span>
-                  </div>
-
-                  <button 
-                    className="claim-btn" 
-                    style={{ width: '100%', padding: '12px', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} 
-                    onClick={handleCheckout}
-                    disabled={totalXp < cartTotal}
-                  >
-                    <CheckCircle size={18} /> {totalXp >= cartTotal ? 'Place Order' : 'Not Enough XP'}
-                  </button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}><span style={{ color: 'var(--text-muted)' }}>Total Cost:</span><span style={{ color: '#fff', fontSize: '1.2rem', fontWeight: 'bold' }}>{cartTotal} XP</span></div>
+                  <button className="claim-btn" style={{ width: '100%', padding: '12px', display: 'flex', justifyContent: 'center', gap: '8px' }} onClick={handleCheckout} disabled={totalXp < cartTotal}><CheckCircle size={18} /> {totalXp >= cartTotal ? 'Place Order' : 'Not Enough XP'}</button>
                 </>
               )}
             </div>
@@ -1811,33 +1652,19 @@ function AppContent() {
         </div>
       )}
 
-      {/* PRODUCT EDITOR MODAL */}
       {editorModal.open && (
         <div className="modal-overlay" onClick={() => setEditorModal({ open: false, mode: 'add', category: '', item: null })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="auth-card" style={{ maxWidth: '100%', position: 'relative' }}>
               <button className="close-modal" onClick={() => setEditorModal({ open: false, mode: 'add', category: '', item: null })}><X size={20}/></button>
               <h2 style={{ textAlign: 'center', marginBottom: '24px', fontSize: '1.25rem', color: '#fff', textTransform: 'capitalize' }}>{editorModal.mode} {editorModal.category.slice(0, -1)}</h2>
-              
               <form onSubmit={saveProduct} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div className="sleek-input-container">
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Product Name:</span>
-                  <input type="text" placeholder="Product Name" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
-                </div>
+                <div className="sleek-input-container"><span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Product Name:</span><input type="text" className="sleek-input" required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /></div>
+                <div className="sleek-input-container"><span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Price (XP):</span><input type="number" className="sleek-input" required value={editForm.price} onChange={e => setEditForm({...editForm, price: e.target.value})} /></div>
                 
                 <div className="sleek-input-container">
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Price (XP):</span>
-                  <input type="number" placeholder="Price (XP)" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editForm.price} onChange={e => setEditForm({...editForm, price: e.target.value})} />
-                </div>
-
-                <div className="sleek-input-container">
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Tier Requirement:</span>
-                  <select 
-                    className="sleek-input" 
-                    style={{ paddingLeft: '14px', appearance: 'none', cursor: 'pointer', fontSize: '0.85rem' }} 
-                    value={editForm.requiredTier || 'none'} 
-                    onChange={e => setEditForm({...editForm, requiredTier: e.target.value})}
-                  >
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Tier Requirement:</span>
+                  <select className="sleek-input" style={{ appearance: 'none', cursor: 'pointer' }} value={editForm.requiredTier || 'none'} onChange={e => setEditForm({...editForm, requiredTier: e.target.value})}>
                     <option value="none">None (Bronze+)</option>
                     <option value="silver">Silver Tier</option>
                     <option value="gold">Gold Tier</option>
@@ -1845,42 +1672,30 @@ function AppContent() {
                   <ChevronDown size={14} style={{ position: 'absolute', right: '14px', top: '38px', color: 'var(--text-muted)' }} />
                 </div>
                 
-                <div className="sleek-input-container" style={{ marginTop: '4px' }}>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Stock Status:</span>
-                  <select 
-                    className="sleek-input" 
-                    style={{ paddingLeft: '14px', appearance: 'none', cursor: 'pointer', fontSize: '0.85rem' }} 
-                    value={editForm.inStock} 
-                    onChange={e => setEditForm({...editForm, inStock: e.target.value})}
-                  >
+                <div className="sleek-input-container">
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Stock Status:</span>
+                  <select className="sleek-input" style={{ appearance: 'none', cursor: 'pointer' }} value={editForm.inStock} onChange={e => setEditForm({...editForm, inStock: e.target.value})}>
                     <option value="true">Available (In Stock)</option>
                     <option value="false">Out of Stock</option>
                   </select>
                   <ChevronDown size={14} style={{ position: 'absolute', right: '14px', top: '38px', color: 'var(--text-muted)' }} />
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Upload Image:</span>
-                  <input type="file" accept="image/*" className="file-upload-input" onChange={handleImageUpload} />
-                </div>
-
-                <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px', width: '100%' }}>Save Product</button>
+                <div className="sleek-input-container"><span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Upload Image:</span><input type="file" accept="image/*" className="file-upload-input" onChange={handleImageUpload} /></div>
+                <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px' }}>Save Product</button>
               </form>
             </div>
           </div>
         </div>
       )}
 
-      {/* DELETE CONFIRMATION MODAL */}
       {deleteModal.open && (
         <div className="modal-overlay" onClick={() => setDeleteModal({ open: false, category: '', id: '', name: '' })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '320px' }}>
             <div className="auth-card" style={{ textAlign: 'center', padding: '24px', position: 'relative' }}>
               <ShieldAlert size={40} color="#ef4444" style={{ margin: '0 auto 16px auto' }} />
               <h2 style={{ color: '#fff', fontSize: '1.2rem', marginBottom: '8px' }}>Delete Product</h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '24px' }}>
-                Are you sure you want to delete <strong style={{color: '#fff'}}>{deleteModal.name}</strong>? This action cannot be undone.
-              </p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '24px' }}>Are you sure you want to delete <strong style={{color: '#fff'}}>{deleteModal.name}</strong>? This action cannot be undone.</p>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button className="claim-btn" style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)' }} onClick={() => setDeleteModal({ open: false, category: '', id: '', name: '' })}>Cancel</button>
                 <button className="claim-btn" style={{ flex: 1, background: '#ef4444' }} onClick={confirmDelete}>Delete</button>
@@ -1894,9 +1709,7 @@ function AppContent() {
         <div className="brand"><img src="./images/logo/logo2.png" alt="Logo" style={{ width: '24px', height: '24px', objectFit: 'cover', borderRadius: '4px' }} /> 4G GAMERS</div>
         <div className="nav-menu" style={{ height: '100%', display: 'flex', flexDirection: 'column', paddingTop: '12px' }}>
           
-          <NavLink to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} style={{ marginBottom: '8px' }}>
-            <Home size={16} /> Home
-          </NavLink>
+          <NavLink to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} style={{ marginBottom: '8px' }}><Home size={16} /> Home</NavLink>
 
           {isAdmin && (
             <>
@@ -1943,51 +1756,28 @@ function AppContent() {
           )}
 
           <div style={{ marginTop: 'auto', marginBottom: '16px' }}>
-            {currentUser && (
-              <div className="nav-link" onClick={handleLogout} style={{ cursor: 'pointer', color: '#ff5252' }}><LogOut size={16} /> Log Out</div>
-            )}
+            {currentUser && (<div className="nav-link" onClick={handleLogout} style={{ cursor: 'pointer', color: '#ff5252' }}><LogOut size={16} /> Log Out</div>)}
           </div>
         </div>
       </div>
 
       <div className="main-area">
         <div className="topbar">
-          <div className="unclaimed-xp-hud">
-            <div className="hud-status-container">
-              <div className="status-dot-pulse"></div>
-              <span className="xp-label">LIVE SESSION XP:</span>
-            </div>
-            <span className="xp-amount">{pendingXp}</span>
-            <button className="claim-btn" style={{ padding: '4px 10px'}} onClick={claimXp}>Claim</button>
-          </div>
+          <LiveXpHud currentUser={currentUser} sysConfig={sysConfigRef.current} onClaimXp={claimXp} />
           
           {currentUser ? (
             <div style={{ display: 'flex', alignItems: 'center' }}>
-              
-              {/* NEW CART BUTTON FOR PLAYERS */}
               {!isAdmin && (
                 <div style={{ position: 'relative', marginRight: '16px' }}>
-                  <button 
-                    className="admin-icon-btn" 
-                    onClick={(e) => { e.stopPropagation(); setShowCartModal(true); setShowUserMenu(false); }} 
-                    style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0', position: 'relative' }}
-                  >
+                  <button className="admin-icon-btn" onClick={(e) => { e.stopPropagation(); setShowCartModal(true); setShowUserMenu(false); }} style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0', position: 'relative' }}>
                     <ShoppingCart size={20} />
-                    {cartItemCount > 0 && (
-                      <span style={{ position: 'absolute', top: '-2px', right: '-2px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {cartItemCount}
-                      </span>
-                    )}
+                    {cartItemCount > 0 && (<span style={{ position: 'absolute', top: '-2px', right: '-2px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 'bold', width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{cartItemCount}</span>)}
                   </button>
                 </div>
               )}
 
               <div style={{ position: 'relative' }}>
-                <button 
-                  className="admin-icon-btn" 
-                  onClick={(e) => { e.stopPropagation(); setShowUserMenu(!showUserMenu); setShowCartModal(false); }} 
-                  style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0' }}
-                >
+                <button className="admin-icon-btn" onClick={(e) => { e.stopPropagation(); setShowUserMenu(!showUserMenu); setShowCartModal(false); }} style={{ borderRadius: '50%', width: '42px', height: '42px', padding: '0' }}>
                   <User size={20} />
                 </button>
 
@@ -2023,28 +1813,16 @@ function AppContent() {
                             <span>Next: {getTierProgress(lifetimeXp, sysConfig).next}</span>
                           </div>
                           <div className="progress-bar-bg">
-                            <div 
-                              className="progress-bar-fill" 
-                              style={{ 
-                                width: `${getTierProgress(lifetimeXp, sysConfig).percentage}%`, 
-                                background: getTierProgress(lifetimeXp, sysConfig).color,
-                                boxShadow: `0 0 10px ${getTierProgress(lifetimeXp, sysConfig).color}`
-                              }}
-                            ></div>
+                            <div className="progress-bar-fill" style={{ width: `${getTierProgress(lifetimeXp, sysConfig).percentage}%`, background: getTierProgress(lifetimeXp, sysConfig).color, boxShadow: `0 0 10px ${getTierProgress(lifetimeXp, sysConfig).color}`}}></div>
                           </div>
                         </div>
                       </>
                     )}
 
                     <div className="drop-divider" style={{ marginTop: '16px' }}></div>
-                    <button 
-                      className="claim-btn" 
-                      style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', color: '#fff', border: '1px solid var(--border)', marginTop: '8px' }}
-                      onClick={() => { navigate('/settings/account'); setShowUserMenu(false); }}
-                    >
+                    <button className="claim-btn" style={{ width: '100%', background: 'rgba(255, 255, 255, 0.05)', color: '#fff', border: '1px solid var(--border)', marginTop: '8px' }} onClick={() => { navigate('/settings/account'); setShowUserMenu(false); }}>
                       <Settings size={14} style={{ marginRight: '6px', verticalAlign: 'text-bottom' }}/> Account Settings
                     </button>
-
                   </div>
                 )}
               </div>
@@ -2071,7 +1849,6 @@ function AppContent() {
             {/* ADMIN ROUTES */}
             <Route path="/dashboard" element={isAdmin ? <AdminDashboard /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
             <Route path="/queue" element={isAdmin ? <OrderQueue /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
-            
             <Route path="/settings/log" element={isAdmin ? <AdminLog /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
             <Route path="/settings/accounts" element={isAdmin ? <AccountsList /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
             <Route path="/settings/system" element={isAdmin ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '20px' }}><SystemConfig config={sysConfig} /></div> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />

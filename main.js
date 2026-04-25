@@ -6,6 +6,19 @@ let tray = null;
 let isQuitting = false;
 
 // ==========================================
+// --- DISKLESS CAFE OPTIMIZATIONS ---
+// ==========================================
+// 1. Limit the Javascript engine's RAM usage to ~250MB so it never lags games
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=250');
+
+// 2. Enable Chromium's native, lag-free smooth scrolling engine
+app.commandLine.appendSwitch('enable-smooth-scrolling');
+
+// 3. Disable background networking features that aren't needed
+app.commandLine.appendSwitch('disable-background-networking');
+
+
+// ==========================================
 // --- SINGLE INSTANCE LOCK ---
 // ==========================================
 const gotTheLock = app.requestSingleInstanceLock();
@@ -15,12 +28,8 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', (event, commandLine, workingDirectory) => {
     if (mainWindow) {
-      if (!mainWindow.isVisible()) {
-        mainWindow.show();
-      }
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
+      if (!mainWindow.isVisible()) mainWindow.show();
+      if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
   });
@@ -36,31 +45,29 @@ if (!gotTheLock) {
     mainWindow = new BrowserWindow({
       width: 1280, 
       height: 768, 
-      useContentSize: true, /* ✨ FIX: Forces the CSS/HTML to be exactly 1280x768 */
+      useContentSize: true, 
       resizable: false, 
       autoHideMenuBar: true, 
       icon: iconPath, 
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-        devTools: false,             // 🛡️ SECURITY: Disables Developer Tools
-        backgroundThrottling: false  // ⚡ PERFORMANCE: Keeps XP timer running perfectly when hidden/minimized!
+        nodeIntegration: false,    // 🛡️ SECURITY MUST BE FALSE
+        contextIsolation: true,    // 🛡️ SECURITY MUST BE TRUE
+        devTools: false,           // 🛡️ SECURITY
+        spellcheck: false,         // ⚡ PERFORMANCE: Saves ~40MB RAM
+        backgroundThrottling: false // ⚡ PERFORMANCE: Keeps XP timer running when hidden
       }
     });
 
-    // 🛡️ SECURITY: Completely nukes the top menu bar (File, Edit, View) so they can't access "Toggle Developer Tools"
     Menu.setApplicationMenu(null);
 
-    // 🛡️ SECURITY: Intercepts and blocks all hacker keyboard shortcuts
+    // Block developer shortcuts
     mainWindow.webContents.on('before-input-event', (event, input) => {
       const isDevToolsShortcut = 
         (input.key === 'F12') || 
         (input.control && input.shift && input.key.toLowerCase() === 'i') ||
         (input.control && input.shift && input.key.toLowerCase() === 'j');
 
-      if (isDevToolsShortcut) {
-        event.preventDefault(); // Blocks the keystroke from doing anything
-      }
+      if (isDevToolsShortcut) event.preventDefault(); 
     });
 
     if (app.isPackaged) {
@@ -69,7 +76,6 @@ if (!gotTheLock) {
       mainWindow.loadURL('http://localhost:5173');
     }
 
-    // Intercept the close "X" button
     mainWindow.on('close', function (event) {
       if (!isQuitting) {
         event.preventDefault(); 
@@ -89,20 +95,8 @@ if (!gotTheLock) {
     tray = new Tray(iconPath);
     
     const contextMenu = Menu.buildFromTemplate([
-      { 
-        label: 'Open 4G GAMERS', 
-        click: function () { 
-          mainWindow.show(); 
-        } 
-      },
-      { 
-        label: 'Exit App', 
-        click: function () { 
-          // Note: If you want to stop players from exiting entirely, you can require an admin password here later!
-          isQuitting = true; 
-          app.quit(); 
-        } 
-      }
+      { label: 'Open 4G GAMERS', click: function () { mainWindow.show(); } },
+      { label: 'Exit App', click: function () { isQuitting = true; app.quit(); } }
     ]);
 
     tray.setToolTip('4G GAMERS Rewards');
@@ -114,9 +108,7 @@ if (!gotTheLock) {
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit();
-    }
+    if (process.platform !== 'darwin') app.quit();
   });
 
   app.on('activate', () => {
