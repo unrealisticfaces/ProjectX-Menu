@@ -14,14 +14,10 @@
   --text-muted: #9ca3af;
 }
 
-/* ==========================================
-   SMOOTH SCROLLING FIX IS HERE 
-   ========================================== */
 html, body {
   scroll-behavior: smooth; 
 }
 
-/* SLEEKER CAFE SCROLLBAR */
 ::-webkit-scrollbar { width: 6px; } 
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 10px; }
@@ -211,7 +207,6 @@ body {
 
 .main-area { flex: 1; display: flex; flex-direction: column; position: relative; z-index: 10; }
 
-/* NATIVE SMOOTH SCROLL HERE */
 .page-content { padding: 30px 40px; overflow-y: auto; flex: 1; height: 100%; scroll-behavior: smooth; }
 
 .page-title { font-size: 1.5rem; font-weight: 800; color: #ffffff; margin-bottom: 6px; letter-spacing: -0.5px; }

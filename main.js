@@ -8,15 +8,9 @@ let isQuitting = false;
 // ==========================================
 // --- DISKLESS CAFE OPTIMIZATIONS ---
 // ==========================================
-// 1. Limit the Javascript engine's RAM usage to ~250MB so it never lags games
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=250');
-
-// 2. Enable Chromium's native, lag-free smooth scrolling engine
 app.commandLine.appendSwitch('enable-smooth-scrolling');
-
-// 3. Disable background networking features that aren't needed
 app.commandLine.appendSwitch('disable-background-networking');
-
 
 // ==========================================
 // --- SINGLE INSTANCE LOCK ---
@@ -26,7 +20,7 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', (event, commandLine, workingDirectory) => {
+  app.on('second-instance', () => {
     if (mainWindow) {
       if (!mainWindow.isVisible()) mainWindow.show();
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -50,17 +44,18 @@ if (!gotTheLock) {
       autoHideMenuBar: true, 
       icon: iconPath, 
       webPreferences: {
-        nodeIntegration: false,    // 🛡️ SECURITY MUST BE FALSE
-        contextIsolation: true,    // 🛡️ SECURITY MUST BE TRUE
-        devTools: false,           // 🛡️ SECURITY
-        spellcheck: false,         // ⚡ PERFORMANCE: Saves ~40MB RAM
-        backgroundThrottling: false // ⚡ PERFORMANCE: Keeps XP timer running when hidden
+        nodeIntegration: true,     
+        contextIsolation: false,   
+        devTools: false,           // 🔒 FLASHLIGHT OFF FOR PRODUCTION
+        spellcheck: false,         
+        backgroundThrottling: false,
+        webSecurity: false         
       }
     });
 
     Menu.setApplicationMenu(null);
 
-    // Block developer shortcuts
+    // 🔒 ANTI-HACKER SECURITY: Block F12 and Ctrl+Shift+I so players can't open DevTools
     mainWindow.webContents.on('before-input-event', (event, input) => {
       const isDevToolsShortcut = 
         (input.key === 'F12') || 
@@ -71,7 +66,9 @@ if (!gotTheLock) {
     });
 
     if (app.isPackaged) {
+      // THE FIX: Using loadFile for local Windows environments
       mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+      // Removed the openDevTools() command!
     } else {
       mainWindow.loadURL('http://localhost:5173');
     }
@@ -109,9 +106,5 @@ if (!gotTheLock) {
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
-  });
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 }

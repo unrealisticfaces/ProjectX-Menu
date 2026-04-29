@@ -1,8 +1,11 @@
 {
   "name": "pc-rewards",
-  "private": true,
+  "productName": "4G GAMERS Hub",
   "version": "1.0.0",
+  "description": "4G Gamers Cybercafe Rewards Hub",
+  "author": "4G Gamers",
   "main": "main.js",
+  "private": true,
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -14,6 +17,9 @@
   "build": {
     "appId": "com.4ggamers.hub",
     "productName": "4G GAMERS Hub",
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**/*",
       "main.js",
@@ -26,7 +32,6 @@
   },
   "dependencies": {
     "@studio-freight/react-lenis": "^0.0.47",
-    "firebase": "^12.12.0",
     "install": "^0.13.0",
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
@@ -34,7 +39,8 @@
     "react-hot-toast": "^2.6.0",
     "react-is": "^19.2.5",
     "react-router-dom": "^7.14.1",
-    "recharts": "^3.8.1"
+    "recharts": "^3.8.1",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
