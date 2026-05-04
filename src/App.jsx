@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, Zap, Flame, CalendarDays, Megaphone, Coins, Cloud, Network } from 'lucide-react';
+import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, Zap, Flame, CalendarDays, Megaphone, Coins, Network } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast'; 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { io } from 'socket.io-client';
@@ -43,10 +43,13 @@ const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
   const [pendingXp, setPendingXp] = useState(0);
 
   useEffect(() => {
-    if (currentUser?.isAdmin || currentUser?.username === 'admin') {
+    // 🛑 STRICT LOGIN CHECK: If no user, or user is admin, freeze XP at 0
+    if (!currentUser || currentUser?.isAdmin || currentUser?.username === 'admin') {
       setPendingXp(0);
       return;
     }
+    
+    // Start ticking only if a normal player is logged in
     const timer = setInterval(() => {
       let mult = 1;
       const d = new Date();
@@ -57,6 +60,7 @@ const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
       const xpPerSecond = ((sysConfig?.xpPerHour || 1800) / 3600) * mult;
       setPendingXp(prev => prev + xpPerSecond);
     }, 1000);
+    
     return () => clearInterval(timer);
   }, [currentUser, sysConfig]);
 
@@ -756,12 +760,11 @@ const SystemConfig = ({ config }) => {
   const [form, setForm] = useState({
     silverXp: config?.silverXp || 2000, goldXp: config?.goldXp || 5000, xpPerHour: config?.xpPerHour || 1800,
     boostDays: config?.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
-    enableMidnightBoost: config?.enableMidnightBoost || false, boostMultiplier: config?.boostMultiplier || 2,
-    autoBackupDaily: config?.autoBackupDaily !== false 
+    enableMidnightBoost: config?.enableMidnightBoost || false, boostMultiplier: config?.boostMultiplier || 2
   });
   const [localIp, setLocalIp] = useState(localStorage.getItem('4g_server_ip') || 'http://localhost:3000');
 
-  useEffect(() => { if(config) setForm(prev => ({...prev, ...config, autoBackupDaily: config.autoBackupDaily !== false})); }, [config]);
+  useEffect(() => { if(config) setForm(prev => ({...prev, ...config })); }, [config]);
 
   const handleDayChange = (dayIndex, isChecked) => setForm(prev => ({ ...prev, boostDays: { ...prev.boostDays, [dayIndex]: isChecked } }));
   const handleSave = (e) => { e.preventDefault(); socket.emit('update_config', form); toast.success("System configurations updated!"); };
@@ -848,22 +851,6 @@ const SystemConfig = ({ config }) => {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Event Multiplier (e.g., 2 for Double XP)</span>
               <input type="number" step="0.1" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.boostMultiplier} onChange={e => setForm({...form, boostMultiplier: e.target.value})} />
             </div>
-          </div>
-        </div>
-
-        {/* Data Security */}
-        <div className="bento-card">
-          <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ShieldAlert color="var(--primary)" size={18} /> Data Security
-          </h3>
-          <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '16px', borderRadius: '8px' }}>
-             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', color: '#fff', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}>
-              <input type="checkbox" checked={form.autoBackupDaily} onChange={e => setForm({...form, autoBackupDaily: e.target.checked})} style={{ width: '16px', height: '16px', accentColor: '#3b82f6', marginTop: '2px' }} />
-              <div>
-                <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}><Cloud size={14}/> Enable Daily Cloud Backup</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '6px', lineHeight: '1.4' }}>Automatically uploads a secure snapshot of the SQLite database to Firebase every day at 4:00 AM.</div>
-              </div>
-            </label>
           </div>
         </div>
 
@@ -1166,7 +1153,7 @@ function AppContent() {
   const [sysConfig, setSysConfig] = useState({ 
     silverXp: 2000, goldXp: 5000, xpPerHour: 1800, 
     boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
-    enableMidnightBoost: false, boostMultiplier: 2, autoBackupDaily: true
+    enableMidnightBoost: false, boostMultiplier: 2
   });
   
   const sysConfigRef = useRef(sysConfig);

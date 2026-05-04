@@ -92,11 +92,11 @@ if (!gotTheLock) {
     tray = new Tray(iconPath);
     
     const contextMenu = Menu.buildFromTemplate([
-      { label: 'Open 4G GAMERS', click: function () { mainWindow.show(); } },
+      { label: 'Open 4G Gamers Hub', click: function () { mainWindow.show(); } },
       { label: 'Exit App', click: function () { isQuitting = true; app.quit(); } }
     ]);
 
-    tray.setToolTip('4G GAMERS Rewards');
+    tray.setToolTip('4G GAMING');
     tray.setContextMenu(contextMenu);
 
     tray.on('double-click', () => {

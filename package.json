@@ -28,6 +28,11 @@
     "win": {
       "target": "nsis",
       "icon": "public/images/logo/logo2.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": true
     }
   },
   "dependencies": {
