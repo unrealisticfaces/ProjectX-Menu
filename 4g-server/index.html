@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>4G Server Engine</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { margin: 0; padding: 0; background-color: #050505; color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; user-select: none; }
+
+    .header { padding: 15px 20px; background: rgba(10,10,10,0.8); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .header h1 { margin: 0; font-size: 1.1rem; font-weight: 800; letter-spacing: 0.5px; }
+    .header p { margin: 0; color: #888; font-size: 0.7rem; }
+    
+    .screen { padding: 20px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; transition: opacity 0.3s; }
+    #mainScreen { display: none; }
+
+    /* ACTIVATION SCREEN STYLES */
+    .lock-icon { margin-bottom: 20px; color: #555; }
+    .activate-title { margin: 0 0 10px 0; font-size: 1.2rem; }
+    .activate-desc { font-size: 0.8rem; color: #888; text-align: center; margin-bottom: 20px; }
+    .key-input { width: 100%; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 1rem; text-align: center; margin-bottom: 15px; text-transform: uppercase; }
+    .key-input:focus { outline: none; border-color: #c12320; }
+    #errorMsg { color: #ef4444; font-size: 0.75rem; margin-bottom: 15px; min-height: 15px; }
+
+    .hwid-box { display: none; background: rgba(0,0,0,0.4); border: 1px dashed rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; margin-bottom: 15px; width: 100%; text-align: center; }
+    .hwid-box p { margin: 0 0 5px 0; font-size: 0.75rem; color: #aaa; }
+    .hwid-input { width: 100%; background: transparent; border: none; color: #22c55e; font-family: monospace; font-size: 0.95rem; text-align: center; outline: none; user-select: all; }
+
+    /* DASHBOARD STYLES */
+    .status-circle { width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; transition: all 0.3s ease; }
+    .status-text { margin: 0; font-size: 1.25rem; text-transform: uppercase; letter-spacing: 1px; font-weight: bold; margin-bottom: 20px; transition: color 0.3s; }
+    
+    .offline .status-circle { background: rgba(239, 68, 68, 0.1); border: 2px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.2); }
+    .offline .status-text { color: #ef4444; }
+    .offline .toggle-btn { background: #22c55e; }
+
+    .online .status-circle { background: rgba(34, 197, 94, 0.1); border: 2px solid #22c55e; box-shadow: 0 0 20px rgba(34, 197, 94, 0.2); }
+    .online .status-text { color: #22c55e; }
+    .online .toggle-btn { background: #ef4444; }
+
+    .network-box { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
+    .net-row { display: flex; justify-content: space-between; align-items: center; }
+    .net-label { color: #888; font-size: 0.8rem; font-weight: 600; }
+    .net-divider { height: 1px; background: rgba(255,255,255,0.05); margin: 10px 0; }
+    .port-input { background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 4px 6px; border-radius: 4px; font-family: monospace; }
+    
+    .folder-btn { margin-bottom: 20px; background: transparent; border: 1px solid #333; color: #aaa; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; gap: 6px; }
+    .toggle-btn, .activate-btn { width: 100%; padding: 14px; border-radius: 10px; border: none; color: #fff; font-size: 1rem; font-weight: 800; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 8px; background: #c12320; }
+    .toggle-btn:active, .activate-btn:active { transform: scale(0.98); }
+    .hint { margin-top: 16px; font-size: 0.7rem; color: #666; text-align: center; line-height: 1.4; }
+  </style>
+</head>
+<body class="offline" id="appBody">
+
+  <div class="header">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c12320" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+    <div>
+      <h1>4G SERVER ENGINE</h1>
+      <p>Cybercafe Backend Controller</p>
+    </div>
+  </div>
+
+  <div class="screen" id="activationScreen">
+    <svg class="lock-icon" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+    <h2 class="activate-title">Engine Locked</h2>
+    <p class="activate-desc">Please enter your 4G Gamers product key to bind this server and activate the engine.</p>
+    
+    <input type="text" id="licenseKey" class="key-input" placeholder="XXXX-XXXX-XXXX" />
+    <div id="errorMsg"></div>
+
+    <div id="hwidContainer" class="hwid-box">
+      <p>Send this Hardware ID to the Admin:</p>
+      <input type="text" id="displayHwid" class="hwid-input" readonly />
+    </div>
+
+    <button class="activate-btn" id="activateBtn">VERIFY & ACTIVATE</button>
+  </div>
+
+  <div class="screen" id="mainScreen">
+    <div class="status-circle">
+      <svg id="statusIcon" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="16" y="16" width="6" height="6" rx="1"></rect><rect x="2" y="16" width="6" height="6" rx="1"></rect><rect x="9" y="2" width="6" height="6" rx="1"></rect><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path><path d="M12 12V8"></path></svg>
+    </div>
+    <h2 class="status-text" id="statusText">OFFLINE</h2>
+
+    <div class="network-box">
+      <div class="net-row">
+        <span class="net-label">IPv4 Address</span>
+        <select id="ipSelect" class="port-input" style="width: 150px;"></select>
+      </div>
+      <div class="net-divider"></div>
+      <div class="net-row">
+        <span class="net-label">Server Port</span>
+        <input type="number" id="portInput" class="port-input" value="3000" style="width: 70px; text-align: right;" />
+      </div>
+    </div>
+
+    <button class="folder-btn" id="openFolderBtn">Open Database Folder</button>
+
+    <button class="toggle-btn" id="toggleBtn">
+      <span id="btnText">START SERVER</span>
+    </button>
+    <p class="hint">When online, clients must connect to:<br/><strong id="hintUrl">http://...:3000</strong></p>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    const appBody = document.getElementById('appBody');
+    const actScreen = document.getElementById('activationScreen');
+    const mainScreen = document.getElementById('mainScreen');
+    
+    let isRunning = false;
+    let currentConfig = {};
+
+    function showDashboard() {
+      actScreen.style.display = 'none';
+      mainScreen.style.display = 'flex';
+    }
+
+    document.getElementById('activateBtn').addEventListener('click', async () => {
+      const key = document.getElementById('licenseKey').value.trim();
+      const errorMsg = document.getElementById('errorMsg');
+      const hwidContainer = document.getElementById('hwidContainer');
+      const displayHwid = document.getElementById('displayHwid');
+      const btn = document.getElementById('activateBtn');
+      
+      if(!key) { errorMsg.innerText = "Please enter a key."; return; }
+      
+      btn.innerText = "VERIFYING...";
+      btn.style.opacity = "0.5";
+      hwidContainer.style.display = 'none'; 
+      
+      const result = await ipcRenderer.invoke('verify-license', key);
+      
+      if (result.success) {
+        currentConfig.licenseKey = key;
+        showDashboard();
+      } else {
+        errorMsg.innerText = result.message;
+        btn.innerText = "VERIFY & ACTIVATE";
+        btn.style.opacity = "1";
+
+        if (result.requiresManualBind) {
+          hwidContainer.style.display = 'block';
+          displayHwid.value = result.hwid;
+        }
+      }
+    });
+
+    ipcRenderer.invoke('get-server-info').then((info) => {
+      if (info.isActivated) showDashboard();
+      
+      const ipSelect = document.getElementById('ipSelect');
+      info.ips.forEach(net => {
+        const opt = document.createElement('option');
+        opt.value = net.ip; opt.text = `${net.ip} (${net.name})`;
+        ipSelect.appendChild(opt);
+      });
+      ipSelect.value = info.savedIp || '0.0.0.0';
+      document.getElementById('portInput').value = info.savedPort || 3000;
+      
+      currentConfig.licenseKey = info.isActivated ? "active" : null;
+    });
+
+    document.getElementById('toggleBtn').addEventListener('click', () => {
+      if (isRunning) {
+        ipcRenderer.send('stop-server');
+      } else {
+        currentConfig.port = Number(document.getElementById('portInput').value);
+        currentConfig.ip = document.getElementById('ipSelect').value;
+        ipcRenderer.send('start-server', currentConfig);
+      }
+    });
+
+    ipcRenderer.on('server-status-changed', (event, status) => {
+      isRunning = status;
+      appBody.className = status ? 'online' : 'offline';
+      document.getElementById('statusText').innerText = status ? 'ONLINE' : 'OFFLINE';
+      document.getElementById('btnText').innerText = status ? 'STOP SERVER' : 'START SERVER';
+      document.getElementById('portInput').disabled = status;
+      document.getElementById('ipSelect').disabled = status;
+    });
+
+    document.getElementById('openFolderBtn').addEventListener('click', () => ipcRenderer.send('open-data-folder'));
+  </script>
+</body>
+</html>

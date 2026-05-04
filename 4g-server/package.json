@@ -1,0 +1,48 @@
+{
+  "name": "4g-server",
+  "version": "1.0.0",
+  "description": "Cybercafe Backend Controller",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build-exe": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.4ggamers.server",
+    "productName": "4G Server Engine",
+    "asar": true,
+    "files": [
+      "main.js",
+      "index.html",
+      "icon.ico"
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "4G Server Engine",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico"
+    }
+  },
+  "keywords": [],
+  "author": "4G Gamers",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3",
+    "sqlite3": "5.1.6",
+    "node-machine-id": "^1.1.12"
+  },
+  "devDependencies": {
+    "electron": "25.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}
