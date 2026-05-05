@@ -9,8 +9,15 @@ const sqlite3 = require('sqlite3').verbose();
 const { machineIdSync } = require('node-machine-id');
 
 // ==========================================
-// 💥 FIREBASE DATABASE URL 💥
-const FIREBASE_DB_URL = "https://projectx-data-default-rtdb.asia-southeast1.firebasedatabase.app";
+// 🔥 FIREBASE URLS (TWO DATABASES) 🔥
+// ==========================================
+const admin = require("firebase-admin");
+
+// 1. Paste your LICENSING Database URL here:
+const LICENSING_DB_URL = "https://projectx-data-default-rtdb.asia-southeast1.firebasedatabase.app/";
+
+// 2. Paste your STORE MANAGER (XP/Users) Database URL here:
+const STORE_DB_URL = "https://posinventory-77b87-default-rtdb.firebaseio.com/";
 // ==========================================
 
 let mainWindow;
@@ -35,6 +42,47 @@ function writeAdminLog(action) {
   fs.appendFile(iniPath, `${ts}="${action}"\n`, () => {});
 }
 
+// ==========================================
+// 🔥 INITIALIZE FIREBASE ADMIN (STORE DB) 🔥
+// ==========================================
+let fdb = null;
+try {
+  let keyPath;
+  if (app.isPackaged) {
+    keyPath = path.join(path.dirname(app.getPath('exe')), 'firebase-admin-key.json');
+  } else {
+    keyPath = path.join(__dirname, 'firebase-admin-key.json');
+  }
+
+  if (!fs.existsSync(keyPath)) {
+    throw new Error(`Missing key file! Please place firebase-admin-key.json next to the .exe file.`);
+  }
+
+  const rawKey = fs.readFileSync(keyPath, 'utf8');
+  const serviceAccount = JSON.parse(rawKey);
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: STORE_DB_URL // <--- Now uses the Store DB URL
+  });
+  
+  fdb = admin.database();
+  writeAdminLog("✅ Firebase Admin Key Loaded Successfully!");
+
+  // 🔥 LIVE WIRE MONITOR
+  fdb.ref(".info/connected").on("value", function(snap) {
+    if (snap.val() === true) {
+      writeAdminLog("🌐 Firebase Network Connection Established!");
+    } else {
+      writeAdminLog("⚠️ Firebase Network Disconnected/Reconnecting...");
+    }
+  });
+
+} catch (e) {
+  writeAdminLog(`❌ Firebase Setup Error: ${e.message}`);
+}
+// ==========================================
+
 function loadConfig() {
   if (fs.existsSync(configPath)) {
     try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch(e) {}
@@ -50,7 +98,6 @@ function startAutomatedBackups() {
   const backupDir = 'C:\\4G_Server_Backups';
   if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
-  // Run every 12 hours
   setInterval(() => {
     if (fs.existsSync(dbPath)) {
       const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
@@ -109,8 +156,9 @@ function createTray() {
 // ==========================================
 ipcMain.handle('verify-license', async (event, key) => {
   try {
-    const hwid = machineIdSync(); // Get PC Fingerprint
-    const response = await fetch(`${FIREBASE_DB_URL}/licenses/${key}.json`);
+    const hwid = machineIdSync(); 
+    // <--- Now uses the LICENSING DB URL
+    const response = await fetch(`${LICENSING_DB_URL}/licenses/${key}.json`);
     const licenseData = await response.json();
 
     if (!licenseData) return { success: false, message: "Invalid License Key." };
@@ -125,16 +173,11 @@ ipcMain.handle('verify-license', async (event, key) => {
       };
     } 
     
-    // 4. Does the hardware match what the Admin pasted?
     if (licenseData.hwid === hwid) {
-      
-      // 💾 THE FIX: Save the key to the hard drive immediately upon success!
       const config = loadConfig();
       config.licenseKey = key;
       saveConfig(config);
-
       return { success: true };
-      
     } else {
       return { success: false, message: "Key is already registered to a different computer." };
     }
@@ -160,7 +203,7 @@ function startServerEngine(config) {
     db.run(`CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, category TEXT, name TEXT, price INTEGER, imageBase64 TEXT, inStock BOOLEAN DEFAULT true, requiredTier TEXT DEFAULT 'none')`);
     db.run(`CREATE TABLE IF NOT EXISTS news (id TEXT PRIMARY KEY, title TEXT, content TEXT, timestamp INTEGER)`);
     db.run(`CREATE TABLE IF NOT EXISTS top_picks (name TEXT PRIMARY KEY)`);
-    db.run(`INSERT OR IGNORE INTO users (username, name, password, isAdmin, isEnabled) VALUES ('admin', 'System Admin', '123', true, true)`);
+    db.run(`INSERT OR IGNORE INTO users (username, name, password, isAdmin, isEnabled) VALUES ('admin', 'System Admin', '123', 1, 1)`);
   });
 
   function broadcastAllUsers() { db.all(`SELECT * FROM users`, [], (err, rows) => { if (!err) io.emit('sync_all_users', rows || []); }); }
@@ -181,7 +224,6 @@ function startServerEngine(config) {
 
   let systemConfig = { silverXp: 2000, goldXp: 5000, xpPerHour: 1800, boostMultiplier: 2, enableMidnightBoost: false };
 
-  // 🔒 SOCKET AUTHENTICATION TRACKER
   const connectedUsers = {}; 
 
   io.on('connection', (socket) => {
@@ -195,6 +237,7 @@ function startServerEngine(config) {
 
     socket.on('login', ({ username, password }) => {
       const safeUsername = username.trim().toLowerCase();
+      
       db.get(`SELECT * FROM users WHERE username = ?`, [safeUsername], (err, row) => {
         if (err) return socket.emit('login_error', 'Database error');
         if (row && row.password === password) {
@@ -202,24 +245,54 @@ function startServerEngine(config) {
           const isAdm = row.isAdmin === 1 || String(row.isAdmin) === 'true';
           if (!isAdm && !isEnabled) return socket.emit('login_error', 'Your account has been disabled.');
           
-          // Track authentication for this socket session
           connectedUsers[socket.id] = row;
-          
           db.run(`UPDATE users SET isOnline = 1 WHERE username = ?`, [safeUsername]);
-          socket.emit('login_success', row); broadcastAllUsers();
-        } else { socket.emit('login_error', 'Incorrect username or password'); }
+          socket.emit('login_success', row); 
+          broadcastAllUsers();
+
+          if (fdb && !isAdm) {
+            fdb.ref(`users/${safeUsername}`).once('value').then((snapshot) => {
+              if (snapshot.exists()) {
+                const cloudData = snapshot.val();
+                db.run(`UPDATE users SET xp = ?, lifetimeXp = ? WHERE username = ?`, [cloudData.xp, cloudData.lifetimeXp, safeUsername]);
+                socket.emit('xp_updated', { xp: cloudData.xp, lifetimeXp: cloudData.lifetimeXp });
+              }
+            }).catch(e => console.error("Firebase background pull failed", e));
+          }
+
+        } else { 
+          socket.emit('login_error', 'Incorrect username or password'); 
+        }
       });
     });
 
     socket.on('register', ({ username, name, password }) => {
       const safeUsername = username.trim().toLowerCase();
-      db.run(`INSERT INTO users (username, name, password, isEnabled) VALUES (?, ?, ?, 1)`, [safeUsername, name, password], function(err) {
+      db.run(`INSERT INTO users (username, name, password, isEnabled, isAdmin) VALUES (?, ?, ?, 1, 0)`, [safeUsername, name, password], function(err) {
           if (err) return socket.emit('login_error', 'Username already exists!');
-          socket.emit('login_success', { username: safeUsername, name, xp: 0, lifetimeXp: 0, isAdmin: 0, isEnabled: 1 }); broadcastAllUsers();
+          
+          if(fdb) fdb.ref(`users/${safeUsername}`).set({ xp: 0, lifetimeXp: 0, name: name, lastSync: Date.now() }).catch(()=>{});
+
+          socket.emit('login_success', { username: safeUsername, name, xp: 0, lifetimeXp: 0, isAdmin: 0, isEnabled: 1 }); 
+          broadcastAllUsers();
       });
     });
 
-    socket.on('logout', (username) => { if(username) { db.run(`UPDATE users SET isOnline = 0 WHERE username = ?`, [username]); broadcastAllUsers(); delete connectedUsers[socket.id]; } });
+    socket.on('logout', (username) => { 
+      if(username) { 
+        db.run(`UPDATE users SET isOnline = 0 WHERE username = ?`, [username]); 
+        
+        if (fdb) {
+          db.get(`SELECT xp, lifetimeXp FROM users WHERE username = ?`, [username], (err, row) => {
+            if (row) fdb.ref(`users/${username}`).update({ xp: row.xp, lifetimeXp: row.lifetimeXp, lastSync: Date.now() }).catch((err)=>{
+              writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
+            });
+          });
+        }
+
+        broadcastAllUsers(); delete connectedUsers[socket.id]; 
+      } 
+    });
 
     socket.on('update_password', ({ username, currentPassword, newPassword }) => {
       const safeUsername = username.trim().toLowerCase();
@@ -247,7 +320,14 @@ function startServerEngine(config) {
       const safeAmount = Math.min(Math.max(0, amount), 10000); 
       db.run(`UPDATE users SET xp = xp + ?, lifetimeXp = lifetimeXp + ? WHERE username = ?`, [safeAmount, safeAmount, username], function(err) {
           if (!err) {
-            db.get(`SELECT xp, lifetimeXp FROM users WHERE username = ?`, [username], (err, row) => { if (row) socket.emit('xp_updated', { xp: row.xp, lifetimeXp: row.lifetimeXp }); });
+            db.get(`SELECT xp, lifetimeXp FROM users WHERE username = ?`, [username], (err, row) => { 
+              if (row) {
+                socket.emit('xp_updated', { xp: row.xp, lifetimeXp: row.lifetimeXp }); 
+                if(fdb) fdb.ref(`users/${username}`).update({ xp: row.xp, lifetimeXp: row.lifetimeXp, lastSync: Date.now() }).catch((err)=>{
+                  writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
+                });
+              }
+            });
             broadcastLeaderboard(); broadcastAllUsers();
           }
       });
@@ -264,7 +344,14 @@ function startServerEngine(config) {
             db.run(`INSERT INTO orders (id, username, itemName, price, timestamp) VALUES (?, ?, ?, ?, ?)`, [orderId, username, item.item, item.price, timestamp]);
             io.emit('new_live_order', { username, item: item.item, timestamp });
           });
-          socket.emit('xp_updated', { xp: user.xp - cartTotal }); socket.emit('order_success', 'Order placed successfully!'); broadcastAllUsers();
+          
+          socket.emit('xp_updated', { xp: user.xp - cartTotal }); 
+          socket.emit('order_success', 'Order placed successfully!'); 
+          broadcastAllUsers();
+
+          if(fdb) fdb.ref(`users/${username}`).update({ xp: user.xp - cartTotal, lastSync: Date.now() }).catch((err)=>{
+            writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
+          });
         });
       });
     });
@@ -272,10 +359,6 @@ function startServerEngine(config) {
     socket.on('request_user_history', (username) => { db.all(`SELECT * FROM orders WHERE username = ? ORDER BY timestamp DESC`, [username], (err, rows) => { if (!err) socket.emit('sync_user_history', rows); }); });
     socket.on('request_all_orders', () => { db.all(`SELECT * FROM orders ORDER BY timestamp DESC`, [], (err, rows) => { if (!err) socket.emit('sync_all_orders', rows); }); });
     socket.on('request_all_users', () => { broadcastAllUsers(); });
-    
-    // ==========================================
-    // 🔒 SECURE ADMIN ROUTES
-    // ==========================================
     
     socket.on('update_order_status', ({ id, status }) => { 
       if (!connectedUsers[socket.id] || !connectedUsers[socket.id].isAdmin) return;
@@ -351,6 +434,23 @@ function startServerEngine(config) {
     });
   });
 
+  // 🔥 5. THE HEARTBEAT PUSH
+  setInterval(() => {
+    if (!fdb || !isServerRunning) return;
+    db.all(`SELECT username, xp, lifetimeXp FROM users WHERE isOnline = 1 AND isAdmin = 0`, [], (err, rows) => {
+      if (err || !rows || rows.length === 0) return;
+      const batchUpdates = {};
+      rows.forEach(r => {
+        batchUpdates[`users/${r.username}/xp`] = r.xp;
+        batchUpdates[`users/${r.username}/lifetimeXp`] = r.lifetimeXp;
+        batchUpdates[`users/${r.username}/lastSync`] = Date.now();
+      });
+      fdb.ref().update(batchUpdates).catch((err)=>{
+         writeAdminLog(`❌ Firebase Heartbeat Sync Error: ${err.message}`);
+      });
+    });
+  }, 10 * 60 * 1000);
+
   httpServer.listen(config.port, config.ip, () => {
     isServerRunning = true;
     if (mainWindow) mainWindow.webContents.send('server-status-changed', true);
@@ -372,10 +472,10 @@ app.whenReady().then(() => {
 
   const savedConfig = loadConfig();
   if (savedConfig.licenseKey) {
-    // 🔒 THE SECURE BOOT PATCH: Silently re-verify with Firebase
     const hwid = machineIdSync();
     
-    fetch(`${FIREBASE_DB_URL}/licenses/${savedConfig.licenseKey}.json`)
+    // <--- Now uses the LICENSING DB URL
+    fetch(`${LICENSING_DB_URL}/licenses/${savedConfig.licenseKey}.json`)
       .then(res => {
         if (!res.ok) throw new Error("Network error");
         return res.json();
