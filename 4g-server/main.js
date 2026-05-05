@@ -7,17 +7,16 @@ const http = require('http');
 const { Server } = require('socket.io');
 const sqlite3 = require('sqlite3').verbose();
 const { machineIdSync } = require('node-machine-id');
+const admin = require("firebase-admin");
 
 // ==========================================
 // 🔥 FIREBASE URLS (TWO DATABASES) 🔥
 // ==========================================
-const admin = require("firebase-admin");
-
 // 1. Paste your LICENSING Database URL here:
-const LICENSING_DB_URL = "https://projectx-data-default-rtdb.asia-southeast1.firebasedatabase.app/";
+const LICENSING_DB_URL = "https://projectx-data-default-rtdb.asia-southeast1.firebasedatabase.app";
 
 // 2. Paste your STORE MANAGER (XP/Users) Database URL here:
-const STORE_DB_URL = "https://posinventory-77b87-default-rtdb.firebaseio.com/";
+const STORE_DB_URL = "https://posinventory-77b87-default-rtdb.firebaseio.com";
 // ==========================================
 
 let mainWindow;
@@ -29,6 +28,7 @@ let httpServer;
 let io;
 let db;
 let isServerRunning = false;
+let fdb = null;
 
 const userDataPath = app.getPath('userData');
 const dbPath = path.join(userDataPath, '4g_database.db');
@@ -45,7 +45,6 @@ function writeAdminLog(action) {
 // ==========================================
 // 🔥 INITIALIZE FIREBASE ADMIN (STORE DB) 🔥
 // ==========================================
-let fdb = null;
 try {
   let keyPath;
   if (app.isPackaged) {
@@ -63,13 +62,12 @@ try {
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    databaseURL: STORE_DB_URL // <--- Now uses the Store DB URL
+    databaseURL: STORE_DB_URL 
   });
   
   fdb = admin.database();
   writeAdminLog("✅ Firebase Admin Key Loaded Successfully!");
 
-  // 🔥 LIVE WIRE MONITOR
   fdb.ref(".info/connected").on("value", function(snap) {
     if (snap.val() === true) {
       writeAdminLog("🌐 Firebase Network Connection Established!");
@@ -89,11 +87,9 @@ function loadConfig() {
   }
   return { ip: '0.0.0.0', port: 3000, licenseKey: null };
 }
+
 function saveConfig(config) { fs.writeFileSync(configPath, JSON.stringify(config)); }
 
-// ==========================================
-// AUTOMATED DISASTER RECOVERY BACKUP
-// ==========================================
 function startAutomatedBackups() {
   const backupDir = 'C:\\4G_Server_Backups';
   if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
@@ -151,13 +147,9 @@ function createTray() {
   tray.on('double-click', () => mainWindow.show());
 }
 
-// ==========================================
-// HWID LICENSING SYSTEM (MANUAL BIND)
-// ==========================================
 ipcMain.handle('verify-license', async (event, key) => {
   try {
     const hwid = machineIdSync(); 
-    // <--- Now uses the LICENSING DB URL
     const response = await fetch(`${LICENSING_DB_URL}/licenses/${key}.json`);
     const licenseData = await response.json();
 
@@ -165,12 +157,7 @@ ipcMain.handle('verify-license', async (event, key) => {
     if (!licenseData.isActive) return { success: false, message: "This License has been revoked by Admin." };
 
     if (licenseData.hwid === "" || !licenseData.hwid) {
-      return { 
-        success: false, 
-        requiresManualBind: true, 
-        hwid: hwid,
-        message: "Key is valid, but pending Admin approval." 
-      };
+      return { success: false, requiresManualBind: true, hwid: hwid, message: "Key is valid, but pending Admin approval." };
     } 
     
     if (licenseData.hwid === hwid) {
@@ -198,19 +185,19 @@ function startServerEngine(config) {
 
   db = new sqlite3.Database(dbPath);
   db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, name TEXT, password TEXT, xp INTEGER DEFAULT 0, lifetimeXp INTEGER DEFAULT 0, isOnline BOOLEAN DEFAULT false, isAdmin BOOLEAN DEFAULT false, isEnabled BOOLEAN DEFAULT true)`);
+    db.run(`CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, firstName TEXT, lastName TEXT, email TEXT, password TEXT, xp INTEGER DEFAULT 0, lifetimeXp INTEGER DEFAULT 0, isOnline BOOLEAN DEFAULT false, isAdmin BOOLEAN DEFAULT false, isEnabled BOOLEAN DEFAULT true)`);
     db.run(`CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, username TEXT, itemName TEXT, price INTEGER, timestamp INTEGER, status TEXT DEFAULT 'pending')`);
     db.run(`CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, category TEXT, name TEXT, price INTEGER, imageBase64 TEXT, inStock BOOLEAN DEFAULT true, requiredTier TEXT DEFAULT 'none')`);
     db.run(`CREATE TABLE IF NOT EXISTS news (id TEXT PRIMARY KEY, title TEXT, content TEXT, timestamp INTEGER)`);
     db.run(`CREATE TABLE IF NOT EXISTS top_picks (name TEXT PRIMARY KEY)`);
-    db.run(`INSERT OR IGNORE INTO users (username, name, password, isAdmin, isEnabled) VALUES ('admin', 'System Admin', '123', 1, 1)`);
+    db.run(`INSERT OR IGNORE INTO users (username, firstName, lastName, email, password, isAdmin, isEnabled) VALUES ('admin', 'System', 'Admin', 'admin@4g.com', '123', 1, 1)`);
   });
 
   function broadcastAllUsers() { db.all(`SELECT * FROM users`, [], (err, rows) => { if (!err) io.emit('sync_all_users', rows || []); }); }
   function broadcastInventory() {
     db.all("SELECT * FROM products", [], (err, rows) => {
       if (err) return;
-      const inventory = { foods: {}, drinks: {}, battlepass: {}, ecoin: {} };
+      const inventory = {};
       rows.forEach(row => {
         if (!inventory[row.category]) inventory[row.category] = {};
         inventory[row.category][row.id] = { id: row.id, name: row.name, price: row.price, file: row.imageBase64, inStock: row.inStock === 1 || String(row.inStock) === 'true', requiredTier: row.requiredTier };
@@ -218,26 +205,48 @@ function startServerEngine(config) {
       io.emit('sync_inventory', inventory);
     });
   }
-  function broadcastLeaderboard() { db.all("SELECT username, xp FROM users WHERE isAdmin = 0 ORDER BY xp DESC LIMIT 3", [], (err, rows) => { if (!err) io.emit('sync_leaderboard', rows); }); }
+  
+  function broadcastLeaderboard() { 
+    db.all("SELECT username, firstName, lastName, xp, lifetimeXp FROM users WHERE isAdmin = 0 ORDER BY lifetimeXp DESC LIMIT 3", [], (err, rows) => { 
+      if (!err) io.emit('sync_leaderboard', rows); 
+    }); 
+  }
+  
   function broadcastNews() { db.all("SELECT * FROM news ORDER BY timestamp DESC", [], (err, rows) => { if (!err) io.emit('sync_news', rows); }); }
   function broadcastTopPicks() { db.all("SELECT name FROM top_picks", [], (err, rows) => { if (!err) io.emit('sync_top_picks', rows.map(r => r.name)); }); }
 
-  let systemConfig = { silverXp: 2000, goldXp: 5000, xpPerHour: 1800, boostMultiplier: 2, enableMidnightBoost: false };
+  let systemConfig = { 
+    shopName: "4G GAMERS",
+    windowTitle: "4G GAMERS HUB | EARN POINTS",
+    logoUrl: "./images/logo/logo2.png",
+    heroImageUrl: "./images/logo/logo2.png",
+    iconUrl: "./images/logo/logo2.png",
+    silverXp: 2000, 
+    goldXp: 5000, 
+    xpPerHour: 1800, 
+    boostMultiplier: 2, 
+    enableMidnightBoost: false,
+    enableCloudSync: true, 
+    subMenus: [
+      { id: 'foods', name: 'Foods' },
+      { id: 'drinks', name: 'Drinks' },
+      { id: 'ecoin', name: 'E-Coin' }
+    ]
+  };
 
   const connectedUsers = {}; 
+  const claimCooldowns = {};           
+  let pendingFirebaseUpdates = {};     
 
   io.on('connection', (socket) => {
     
-    socket.on('disconnect', () => {
-      delete connectedUsers[socket.id];
-    });
+    socket.on('disconnect', () => { delete connectedUsers[socket.id]; });
 
     socket.on('request_initial_data', () => { broadcastInventory(); broadcastNews(); broadcastTopPicks(); socket.emit('sync_config', systemConfig); });
     socket.on('request_leaderboard', () => broadcastLeaderboard());
 
     socket.on('login', ({ username, password }) => {
       const safeUsername = username.trim().toLowerCase();
-      
       db.get(`SELECT * FROM users WHERE username = ?`, [safeUsername], (err, row) => {
         if (err) return socket.emit('login_error', 'Database error');
         if (row && row.password === password) {
@@ -250,7 +259,7 @@ function startServerEngine(config) {
           socket.emit('login_success', row); 
           broadcastAllUsers();
 
-          if (fdb && !isAdm) {
+          if (fdb && !isAdm && systemConfig.enableCloudSync) {
             fdb.ref(`users/${safeUsername}`).once('value').then((snapshot) => {
               if (snapshot.exists()) {
                 const cloudData = snapshot.val();
@@ -259,21 +268,21 @@ function startServerEngine(config) {
               }
             }).catch(e => console.error("Firebase background pull failed", e));
           }
-
-        } else { 
-          socket.emit('login_error', 'Incorrect username or password'); 
-        }
+        } else { socket.emit('login_error', 'Incorrect username or password'); }
       });
     });
 
-    socket.on('register', ({ username, name, password }) => {
+    socket.on('register', ({ username, firstName, lastName, email, password }) => {
       const safeUsername = username.trim().toLowerCase();
-      db.run(`INSERT INTO users (username, name, password, isEnabled, isAdmin) VALUES (?, ?, ?, 1, 0)`, [safeUsername, name, password], function(err) {
+      db.run(`INSERT INTO users (username, firstName, lastName, email, password, isEnabled, isAdmin) VALUES (?, ?, ?, ?, ?, 1, 0)`, 
+      [safeUsername, firstName, lastName, email, password], function(err) {
           if (err) return socket.emit('login_error', 'Username already exists!');
           
-          if(fdb) fdb.ref(`users/${safeUsername}`).set({ xp: 0, lifetimeXp: 0, name: name, lastSync: Date.now() }).catch(()=>{});
-
-          socket.emit('login_success', { username: safeUsername, name, xp: 0, lifetimeXp: 0, isAdmin: 0, isEnabled: 1 }); 
+          if(fdb && systemConfig.enableCloudSync) {
+            fdb.ref(`users/${safeUsername}`).set({ xp: 0, lifetimeXp: 0, firstName, lastName, email, lastSync: Date.now() }).catch(()=>{});
+          }
+          
+          socket.emit('login_success', { username: safeUsername, firstName, lastName, email, xp: 0, lifetimeXp: 0, isAdmin: 0, isEnabled: 1 }); 
           broadcastAllUsers();
       });
     });
@@ -282,14 +291,13 @@ function startServerEngine(config) {
       if(username) { 
         db.run(`UPDATE users SET isOnline = 0 WHERE username = ?`, [username]); 
         
-        if (fdb) {
+        if (fdb && systemConfig.enableCloudSync) {
           db.get(`SELECT xp, lifetimeXp FROM users WHERE username = ?`, [username], (err, row) => {
             if (row) fdb.ref(`users/${username}`).update({ xp: row.xp, lifetimeXp: row.lifetimeXp, lastSync: Date.now() }).catch((err)=>{
               writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
             });
           });
         }
-
         broadcastAllUsers(); delete connectedUsers[socket.id]; 
       } 
     });
@@ -305,27 +313,44 @@ function startServerEngine(config) {
       });
     });
 
-    socket.on('reset_forgot_password', ({ username, name, newPassword }) => {
-      const safeUsername = username.trim().toLowerCase(); const safeName = name.trim().toLowerCase();
-      db.get(`SELECT name FROM users WHERE username = ?`, [safeUsername], (err, row) => {
+    socket.on('reset_forgot_password', ({ username, firstName, lastName, email }) => {
+      const safeUsername = username.trim().toLowerCase();
+      db.get(`SELECT firstName, lastName, email FROM users WHERE username = ?`, [safeUsername], (err, row) => {
         if (err || !row) return socket.emit('login_error', 'User account not found.');
-        if (row.name.toLowerCase() !== safeName) return socket.emit('login_error', 'Verification failed.');
-        db.run(`UPDATE users SET password = ? WHERE username = ?`, [newPassword, safeUsername], function(err) {
-          if (!err) { socket.emit('password_reset_success', 'Password reset successfully!'); writeAdminLog(`User @${safeUsername} executed a self-service password reset.`); }
+        
+        if (row.firstName.toLowerCase() !== firstName.trim().toLowerCase() || 
+            row.lastName.toLowerCase() !== lastName.trim().toLowerCase() || 
+            row.email.toLowerCase() !== email.trim().toLowerCase()) {
+            return socket.emit('login_error', 'Verification failed. Details do not match our records.');
+        }
+
+        db.run(`UPDATE users SET password = ? WHERE username = ?`, ['123', safeUsername], function(err) {
+          if (!err) { 
+            socket.emit('password_reset_success', 'Verified! Your password has been reset to 123'); 
+            writeAdminLog(`User @${safeUsername} executed a verified self-service password reset.`); 
+          }
         });
       });
     });
 
     socket.on('claim_xp', ({ username, amount }) => {
+      if (claimCooldowns[username] && Date.now() - claimCooldowns[username] < 300000) {
+        return socket.emit('order_error', 'Please wait 5 minutes before claiming XP again.');
+      }
+      claimCooldowns[username] = Date.now();
+
       const safeAmount = Math.min(Math.max(0, amount), 10000); 
       db.run(`UPDATE users SET xp = xp + ?, lifetimeXp = lifetimeXp + ? WHERE username = ?`, [safeAmount, safeAmount, username], function(err) {
           if (!err) {
             db.get(`SELECT xp, lifetimeXp FROM users WHERE username = ?`, [username], (err, row) => { 
               if (row) {
                 socket.emit('xp_updated', { xp: row.xp, lifetimeXp: row.lifetimeXp }); 
-                if(fdb) fdb.ref(`users/${username}`).update({ xp: row.xp, lifetimeXp: row.lifetimeXp, lastSync: Date.now() }).catch((err)=>{
-                  writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
-                });
+                
+                if (systemConfig.enableCloudSync) {
+                  pendingFirebaseUpdates[`users/${username}/xp`] = row.xp;
+                  pendingFirebaseUpdates[`users/${username}/lifetimeXp`] = row.lifetimeXp;
+                  pendingFirebaseUpdates[`users/${username}/lastSync`] = Date.now();
+                }
               }
             });
             broadcastLeaderboard(); broadcastAllUsers();
@@ -349,9 +374,11 @@ function startServerEngine(config) {
           socket.emit('order_success', 'Order placed successfully!'); 
           broadcastAllUsers();
 
-          if(fdb) fdb.ref(`users/${username}`).update({ xp: user.xp - cartTotal, lastSync: Date.now() }).catch((err)=>{
-            writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
-          });
+          if(fdb && systemConfig.enableCloudSync) {
+            fdb.ref(`users/${username}`).update({ xp: user.xp - cartTotal, lastSync: Date.now() }).catch((err)=>{
+              writeAdminLog(`❌ Firebase Sync Error for ${username}: ${err.message}`);
+            });
+          }
         });
       });
     });
@@ -365,13 +392,13 @@ function startServerEngine(config) {
       db.run(`UPDATE orders SET status = ? WHERE id = ?`, [status, id], () => { writeAdminLog(`Processed order ${id} - Status: ${status}`); db.all(`SELECT * FROM orders ORDER BY timestamp DESC`, [], (err, rows) => { if (!err) io.emit('sync_all_orders', rows); }); }); 
     });
 
-    socket.on('admin_update_user', ({ username, name, password, isEnabled }) => {
+    socket.on('admin_update_user', ({ username, firstName, lastName, email, password, isEnabled }) => {
       if (!connectedUsers[socket.id] || !connectedUsers[socket.id].isAdmin) return;
       const enabledVal = isEnabled ? 1 : 0;
       if (password && password.trim() !== '') {
-        db.run(`UPDATE users SET name = ?, password = ?, isEnabled = ? WHERE username = ?`, [name, password, enabledVal, username], () => { writeAdminLog(`Updated user profile, password, and status for @${username}`); broadcastAllUsers(); });
+        db.run(`UPDATE users SET firstName = ?, lastName = ?, email = ?, password = ?, isEnabled = ? WHERE username = ?`, [firstName, lastName, email, password, enabledVal, username], () => { writeAdminLog(`Updated user profile, password, and status for @${username}`); broadcastAllUsers(); });
       } else {
-        db.run(`UPDATE users SET name = ?, isEnabled = ? WHERE username = ?`, [name, enabledVal, username], () => { writeAdminLog(`Updated user profile name and status for @${username}`); broadcastAllUsers(); });
+        db.run(`UPDATE users SET firstName = ?, lastName = ?, email = ?, isEnabled = ? WHERE username = ?`, [firstName, lastName, email, enabledVal, username], () => { writeAdminLog(`Updated user profile and status for @${username}`); broadcastAllUsers(); });
       }
     });
 
@@ -417,7 +444,40 @@ function startServerEngine(config) {
 
     socket.on('update_config', (newConfig) => { 
       if (!connectedUsers[socket.id] || !connectedUsers[socket.id].isAdmin) return;
-      systemConfig = newConfig; writeAdminLog(`Updated Global System Configuration parameters`); io.emit('sync_config', systemConfig); 
+      
+      const wasCloudOff = !systemConfig.enableCloudSync;
+      const isCloudNowOn = newConfig.enableCloudSync;
+
+      systemConfig = newConfig; 
+      writeAdminLog(`Updated Global System Configuration parameters`); 
+      io.emit('sync_config', systemConfig); 
+
+      // 🔥 THE SMART CATCH-UP LOGIC
+      if (wasCloudOff && isCloudNowOn && fdb) {
+        writeAdminLog(`☁️ Cloud Sync Re-enabled: Initiating Smart Catch-Up...`);
+        
+        db.all(`SELECT username, xp, lifetimeXp, firstName, lastName, email FROM users WHERE isAdmin = 0`, [], (err, rows) => {
+          if (err || !rows || rows.length === 0) return;
+          
+          const batchUpdates = {}; 
+          rows.forEach(r => {
+            batchUpdates[`users/${r.username}/xp`] = r.xp;
+            batchUpdates[`users/${r.username}/lifetimeXp`] = r.lifetimeXp;
+            batchUpdates[`users/${r.username}/firstName`] = r.firstName || "";
+            batchUpdates[`users/${r.username}/lastName`] = r.lastName || "";
+            batchUpdates[`users/${r.username}/email`] = r.email || "";
+            batchUpdates[`users/${r.username}/lastSync`] = Date.now();
+          });
+          
+          fdb.ref().update(batchUpdates)
+            .then(() => {
+              writeAdminLog(`✅ Smart Catch-Up Complete: Synced ${rows.length} offline profiles to Firebase in 1 request.`);
+            })
+            .catch((err) => {
+              writeAdminLog(`❌ Firebase Catch-Up Error: ${err.message}`);
+            });
+        });
+      }
     });
 
     socket.on('request_admin_logs', () => {
@@ -434,9 +494,18 @@ function startServerEngine(config) {
     });
   });
 
-  // 🔥 5. THE HEARTBEAT PUSH
   setInterval(() => {
-    if (!fdb || !isServerRunning) return;
+    if (fdb && isServerRunning && systemConfig.enableCloudSync && Object.keys(pendingFirebaseUpdates).length > 0) {
+      const batchToPush = { ...pendingFirebaseUpdates };
+      pendingFirebaseUpdates = {}; 
+      fdb.ref().update(batchToPush).catch((err) => {
+         writeAdminLog(`❌ Firebase Micro-Batch Sync Error: ${err.message}`);
+      });
+    }
+  }, 15000);
+
+  setInterval(() => {
+    if (!fdb || !isServerRunning || !systemConfig.enableCloudSync) return;
     db.all(`SELECT username, xp, lifetimeXp FROM users WHERE isOnline = 1 AND isAdmin = 0`, [], (err, rows) => {
       if (err || !rows || rows.length === 0) return;
       const batchUpdates = {};
@@ -458,9 +527,6 @@ function startServerEngine(config) {
   });
 }
 
-// ==========================================
-// INITIALIZATION & SECURE BOOT
-// ==========================================
 app.whenReady().then(() => {
   createWindow();
   createTray();
@@ -474,7 +540,6 @@ app.whenReady().then(() => {
   if (savedConfig.licenseKey) {
     const hwid = machineIdSync();
     
-    // <--- Now uses the LICENSING DB URL
     fetch(`${LICENSING_DB_URL}/licenses/${savedConfig.licenseKey}.json`)
       .then(res => {
         if (!res.ok) throw new Error("Network error");
