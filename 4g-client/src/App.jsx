@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, Zap, Flame, CalendarDays, Megaphone, Coins, Network } from 'lucide-react';
+import { Gamepad2, Settings, Coffee, Pizza, Wallet, ShoppingCart, ChevronDown, ChevronRight, User, Lock, BadgeCheck, LogOut, History, ShieldAlert, X, Edit, Trash2, Plus, Search, ListTodo, CheckCircle, FileText, Users, Medal, Trophy, Sliders, Home, Zap, Flame, CalendarDays, Megaphone, Coins, Network, LayoutList, Palette, Mail, UserCircle, Eye, EyeOff, Cloud, CloudOff } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast'; 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { io } from 'socket.io-client';
 import './App.css';
 
-// Get saved IP from local storage, default to localhost for development
 const savedServerIp = localStorage.getItem('4g_server_ip') || 'http://localhost:3000';
 const socket = io(savedServerIp, { transports: ['websocket'] });
 
@@ -41,15 +40,15 @@ const getTierProgress = (lifetimeXp, config) => {
 
 const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
   const [pendingXp, setPendingXp] = useState(0);
+  const [cooldown, setCooldown] = useState(0);
 
   useEffect(() => {
-    // 🛑 STRICT LOGIN CHECK: If no user, or user is admin, freeze XP at 0
     if (!currentUser || currentUser?.isAdmin || currentUser?.username === 'admin') {
       setPendingXp(0);
+      setCooldown(0);
       return;
     }
     
-    // Start ticking only if a normal player is logged in
     const timer = setInterval(() => {
       let mult = 1;
       const d = new Date();
@@ -64,6 +63,23 @@ const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
     return () => clearInterval(timer);
   }, [currentUser, sysConfig]);
 
+  useEffect(() => {
+    let cdTimer;
+    if (cooldown > 0) {
+      cdTimer = setInterval(() => setCooldown(prev => prev - 1), 1000);
+    }
+    return () => clearInterval(cdTimer);
+  }, [cooldown]);
+
+  const isClaimDisabled = cooldown > 0 || Math.floor(pendingXp) === 0;
+
+  const formatCooldown = (seconds) => {
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  };
+
   return (
     <div className="unclaimed-xp-hud">
       <div className="hud-status-container">
@@ -71,11 +87,27 @@ const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
         <span className="xp-label">LIVE SESSION XP:</span>
       </div>
       <span className="xp-amount">{Math.floor(pendingXp)}</span>
-      <button className="claim-btn" style={{ padding: '4px 10px'}} onClick={() => {
-        if (!currentUser) { toast.error("Create an account or sign in to claim your XP!"); return; }
-        if(pendingXp > 0) { onClaimXp(Math.floor(pendingXp)); setPendingXp(0); } 
-        else { toast.error("No XP to claim yet."); }
-      }}>Claim</button>
+      <button 
+        className="claim-btn" 
+        disabled={isClaimDisabled}
+        style={{ 
+          padding: '4px 10px', 
+          opacity: isClaimDisabled ? 0.5 : 1,
+          cursor: isClaimDisabled ? 'not-allowed' : 'pointer',
+          minWidth: '75px'
+        }} 
+        onClick={() => {
+          if (!currentUser) { toast.error("Create an account or sign in to claim your XP!"); return; }
+          const xpToClaim = Math.floor(pendingXp);
+          if (xpToClaim > 0 && cooldown === 0) { 
+            onClaimXp(xpToClaim); 
+            setPendingXp(0); 
+            setCooldown(300); 
+          } 
+        }}
+      >
+        {cooldown > 0 ? formatCooldown(cooldown) : 'Claim'}
+      </button>
     </div>
   );
 };
@@ -94,20 +126,27 @@ const LeaderboardWidget = ({ layout = 'vertical' }) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: layout === 'horizontal' ? '10px 0' : '0' }}>
-      <div className="chart-title" style={{ textAlign: layout === 'horizontal' ? 'left' : 'center', margin: layout === 'horizontal' ? '0' : '0 0 16px 0', letterSpacing: '0.5px' }}>TOP 3 RANKED</div>
+      <div className="chart-title" style={{ textAlign: layout === 'horizontal' ? 'left' : 'center', margin: layout === 'horizontal' ? '0' : '0 0 16px 0', letterSpacing: '0.5px' }}>TOP 3 RANKED (LIFETIME)</div>
       {topPlayers.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>No data available.</div>
       ) : (
         <div className={layout === 'horizontal' ? "leaderboard-list-horizontal" : "leaderboard-list"}>
-          {topPlayers.map((player, idx) => (
-            <div key={player.username} className="leaderboard-item" style={{ background: bgColors[idx], border: `1px solid ${borderColors[idx]}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div className="player-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Medal size={22} color={medalColors[idx]} /> 
-                <span className="player-name" style={{ fontWeight: 'bold', color: '#fff' }}>@{player.username}</span>
+          {topPlayers.map((player, idx) => {
+            const displayName = player.firstName && player.lastName ? `${player.firstName} ${player.lastName}` : (player.name || "Anonymous");
+            return (
+              <div key={player.username} className="leaderboard-item" style={{ background: bgColors[idx], border: `1px solid ${borderColors[idx]}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="player-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Medal size={22} color={medalColors[idx]} /> 
+                  <span className="player-name" style={{ fontWeight: 'bold', color: '#fff', textTransform: 'capitalize' }}>
+                    {displayName}
+                  </span>
+                </div>
+                <span className="xp-score" style={{ fontWeight: 'bold', color: medalColors[idx] }}>
+                  {player.lifetimeXp || 0} XP
+                </span>
               </div>
-              <span className="xp-score" style={{ fontWeight: 'bold', color: medalColors[idx] }}>{player.xp} XP</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -210,6 +249,7 @@ const AccountSettings = ({ currentUser }) => {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
 
   useEffect(() => {
     const handleSuccess = (msg) => {
@@ -218,6 +258,7 @@ const AccountSettings = ({ currentUser }) => {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      setShowPwd(false);
     };
     const handleError = (msg) => toast.error(msg);
 
@@ -249,7 +290,10 @@ const AccountSettings = ({ currentUser }) => {
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div className="sleek-input-container" style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Full Name:</span><strong style={{ color: '#fff', fontSize: '0.8rem' }}>{currentUser.name}</strong>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Full Name:</span><strong style={{ color: '#fff', fontSize: '0.8rem', textTransform: 'capitalize' }}>{currentUser.firstName} {currentUser.lastName}</strong>
+          </div>
+          <div className="sleek-input-container" style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Email:</span><strong style={{ color: '#fff', fontSize: '0.8rem' }}>{currentUser.email}</strong>
           </div>
           <div className="sleek-input-container" style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Username:</span><strong style={{ color: '#fff', fontSize: '0.8rem' }}>@{currentUser.username}</strong>
@@ -263,7 +307,12 @@ const AccountSettings = ({ currentUser }) => {
             <form onSubmit={handlePasswordUpdate} style={{ background: 'rgba(0,0,0,0.4)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
               <span style={{ color: '#fff', fontSize: '0.85rem', marginBottom: '4px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}><Lock size={14} color="var(--primary)" /> Update Password</span>
               
-              <input type="password" placeholder="Current Password" className="sleek-input" style={{ paddingLeft: '12px', fontSize: '0.8rem', padding: '8px 12px' }} required value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+              <div className="sleek-input-container">
+                <input type={showPwd ? "text" : "password"} placeholder="Current Password" className="sleek-input" style={{ paddingLeft: '12px', fontSize: '0.8rem', padding: '8px 12px' }} required value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+                <button type="button" onClick={() => setShowPwd(!showPwd)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
               
               <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }}></div>
 
@@ -271,7 +320,7 @@ const AccountSettings = ({ currentUser }) => {
               <input type="password" placeholder="Confirm New Password" className="sleek-input" style={{ paddingLeft: '12px', fontSize: '0.8rem', padding: '8px 12px' }} required value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
               
               <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                <button type="button" className="claim-btn" style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)', fontSize: '0.75rem', padding: '8px' }} onClick={() => { setIsChangingPassword(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); }}>Cancel</button>
+                <button type="button" className="claim-btn" style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)', fontSize: '0.75rem', padding: '8px' }} onClick={() => { setIsChangingPassword(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setShowPwd(false); }}>Cancel</button>
                 <button type="submit" className="claim-btn" style={{ flex: 1, fontSize: '0.75rem', padding: '8px' }}>Save</button>
               </div>
             </form>
@@ -442,7 +491,7 @@ const OrderQueue = () => {
                   <tr key={i} style={{ background: isPending ? 'rgba(234, 179, 8, 0.05)' : 'transparent' }}>
                     <td style={{ color: 'var(--text-muted)' }}>{new Date(p.timestamp).toLocaleString()}</td>
                     <td style={{ fontWeight: '600', color: '#fff' }}>@{p.username}</td>
-                    <td style={{ color: 'var(--text-muted)' }}>{p.name || 'Player'}</td>
+                    <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{p.name || 'Player'}</td>
                     <td style={{ color: '#fff' }}>{p.item}</td>
                     <td>
                       <span className={`status-badge status-${p.status || 'pending'}`}>
@@ -484,7 +533,7 @@ const OrderQueue = () => {
 const AccountsList = () => {
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState('');
-  const [editUserModal, setEditUserModal] = useState({ open: false, username: '', name: '', password: '', isEnabled: true });
+  const [editUserModal, setEditUserModal] = useState({ open: false, username: '', firstName: '', lastName: '', email: '', password: '', isEnabled: true });
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
@@ -500,12 +549,14 @@ const AccountsList = () => {
     e.preventDefault();
     socket.emit('admin_update_user', { 
       username: editUserModal.username, 
-      name: editUserModal.name, 
+      firstName: editUserModal.firstName, 
+      lastName: editUserModal.lastName,
+      email: editUserModal.email,
       password: editUserModal.password,
       isEnabled: editUserModal.isEnabled
     });
     toast.success(`Account @${editUserModal.username} updated!`);
-    setEditUserModal({ open: false, username: '', name: '', password: '', isEnabled: true });
+    setEditUserModal({ open: false, username: '', firstName: '', lastName: '', email: '', password: '', isEnabled: true });
   };
 
   const handleDeleteUser = (username) => {
@@ -522,9 +573,10 @@ const AccountsList = () => {
     
     const searchLower = search.toLowerCase();
     const matchUser = u.username ? String(u.username).toLowerCase().includes(searchLower) : false;
-    const matchName = u.name ? String(u.name).toLowerCase().includes(searchLower) : false;
+    const matchFirst = u.firstName ? String(u.firstName).toLowerCase().includes(searchLower) : false;
+    const matchLast = u.lastName ? String(u.lastName).toLowerCase().includes(searchLower) : false;
     
-    return matchUser || matchName;
+    return matchUser || matchFirst || matchLast;
   });
 
   const totalPages = Math.ceil(filteredUsers.length / itemsPerPage) || 1;
@@ -552,7 +604,8 @@ const AccountsList = () => {
               {currentUsers.map((user, idx) => {
                 const isOnline = user.isOnline === true || user.isOnline === 1 || String(user.isOnline).toLowerCase() === 'true';
                 const isEnabled = user.isEnabled === 1 || String(user.isEnabled) === 'true' || user.isEnabled === null || user.isEnabled === undefined;
-                
+                const displayName = user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : (user.name || 'Unknown');
+
                 return (
                   <tr key={user.username || idx} style={{ opacity: isEnabled ? 1 : 0.5 }}>
                     <td style={{ fontWeight: '600', color: '#fff' }}>
@@ -562,7 +615,7 @@ const AccountsList = () => {
                         {!isEnabled && <span style={{ fontSize: '0.65rem', background: '#ef4444', color: '#fff', padding: '2px 6px', borderRadius: '4px', marginLeft: '6px' }}>DISABLED</span>}
                       </div>
                     </td>
-                    <td style={{ color: 'var(--text-muted)' }}>{user.name || 'Unknown'}</td>
+                    <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{displayName}</td>
                     <td style={{ color: 'var(--primary)', fontFamily: 'monospace', fontWeight: 'bold' }}>{user.xp || 0} XP</td>
                     <td>
                       <span className={`status-badge ${isEnabled ? 'status-completed' : 'status-declined'}`}>
@@ -571,7 +624,7 @@ const AccountsList = () => {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        <button className="admin-icon-btn" onClick={() => setEditUserModal({ open: true, username: user.username, name: user.name || '', password: '', isEnabled: isEnabled })} title="Edit User & Reset Password"><Edit size={14}/></button>
+                        <button className="admin-icon-btn" onClick={() => setEditUserModal({ open: true, username: user.username, firstName: user.firstName || '', lastName: user.lastName || '', email: user.email || '', password: '', isEnabled: isEnabled })} title="Edit User & Reset Password"><Edit size={14} /></button>
                         <button className="admin-icon-btn" onClick={() => handleDeleteUser(user.username)} title="Delete User"><Trash2 size={14} color="#ef4444" /></button>
                       </div>
                     </td>
@@ -595,13 +648,24 @@ const AccountsList = () => {
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: '350px' }}>
             <div className="auth-card">
-              <button className="close-modal" onClick={() => setEditUserModal({ open: false, username: '', name: '', password: '', isEnabled: true })}><X size={20}/></button>
+              <button className="close-modal" onClick={() => setEditUserModal({ open: false, username: '', firstName: '', lastName: '', email: '', password: '', isEnabled: true })}><X size={20} /></button>
               <h2 style={{ textAlign: 'center', marginBottom: '20px', fontSize: '1.2rem', color: '#fff' }}>Edit @{editUserModal.username}</h2>
               
               <form onSubmit={handleSaveUser} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                    <div className="sleek-input-container" style={{flex: 1}}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 4px 0', display: 'block' }}>First Name:</span>
+                      <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editUserModal.firstName} onChange={e => setEditUserModal({...editUserModal, firstName: e.target.value})} />
+                    </div>
+                    <div className="sleek-input-container" style={{flex: 1}}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 4px 0', display: 'block' }}>Last Name:</span>
+                      <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editUserModal.lastName} onChange={e => setEditUserModal({...editUserModal, lastName: e.target.value})} />
+                    </div>
+                </div>
+
                 <div className="sleek-input-container">
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 4px 0', display: 'block' }}>Display Name:</span>
-                  <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editUserModal.name} onChange={e => setEditUserModal({...editUserModal, name: e.target.value})} />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 4px 0', display: 'block' }}>Email:</span>
+                  <input type="email" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={editUserModal.email} onChange={e => setEditUserModal({...editUserModal, email: e.target.value})} />
                 </div>
 
                 <div className="sleek-input-container">
@@ -630,7 +694,7 @@ const AccountsList = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                  <button type="button" className="claim-btn" style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)' }} onClick={() => setEditUserModal({ open: false, username: '', name: '', password: '', isEnabled: true })}>Cancel</button>
+                  <button type="button" className="claim-btn" style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)' }} onClick={() => setEditUserModal({ open: false, username: '', firstName: '', lastName: '', email: '', password: '', isEnabled: true })}>Cancel</button>
                   <button type="submit" className="claim-btn" style={{ flex: 1 }}>Save Changes</button>
                 </div>
               </form>
@@ -663,7 +727,7 @@ const NewsManager = ({ newsList }) => {
         
         <div className="bento-card" style={{ flex: '1 1 350px' }}>
           <h3 style={{ color: '#fff', fontSize: '1.05rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Megaphone color="var(--primary)" size={18} /> Create New Post
+            <Megaphone size={18} color="var(--primary)" /> Create New Post
           </h3>
           <form onSubmit={handleAdd} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div className="sleek-input-container">
@@ -711,7 +775,6 @@ const AdminLog = () => {
     socket.on('sync_admin_logs', (data) => setLogs(Array.isArray(data) ? data : []));
     socket.emit('request_admin_logs');
     
-    // Auto-update logs if changes occur
     socket.on('new_log_entry', () => socket.emit('request_admin_logs'));
 
     return () => {
@@ -758,23 +821,58 @@ const AdminLog = () => {
 
 const SystemConfig = ({ config }) => {
   const [form, setForm] = useState({
-    silverXp: config?.silverXp || 2000, goldXp: config?.goldXp || 5000, xpPerHour: config?.xpPerHour || 1800,
-    boostDays: config?.boostDays || { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
-    enableMidnightBoost: config?.enableMidnightBoost || false, boostMultiplier: config?.boostMultiplier || 2
+    shopName: "4G GAMERS",
+    windowTitle: "4G GAMERS HUB | EARN POINTS",
+    logoUrl: "./images/logo/logo2.png",
+    heroImageUrl: "./images/logo/logo2.png",
+    iconUrl: "./images/logo/logo2.png",
+    silverXp: 2000, goldXp: 5000, xpPerHour: 1800,
+    boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
+    enableMidnightBoost: false, boostMultiplier: 2,
+    enableCloudSync: true,
+    subMenus: [
+      { id: 'foods', name: 'Foods' },
+      { id: 'drinks', name: 'Drinks' },
+      { id: 'ecoin', name: 'E-Coin' }
+    ]
   });
-  const [localIp, setLocalIp] = useState(localStorage.getItem('4g_server_ip') || 'http://localhost:3000');
 
-  useEffect(() => { if(config) setForm(prev => ({...prev, ...config })); }, [config]);
+  const [localIp, setLocalIp] = useState(localStorage.getItem('4g_server_ip') || 'http://localhost:3000');
+  const [newMenuName, setNewMenuName] = useState('');
+
+  useEffect(() => { 
+    if(config) {
+      setForm(prev => ({
+        ...prev, 
+        ...config,
+        enableCloudSync: config.enableCloudSync !== false, 
+        subMenus: config.subMenus || prev.subMenus
+      })); 
+    }
+  }, [config]);
 
   const handleDayChange = (dayIndex, isChecked) => setForm(prev => ({ ...prev, boostDays: { ...prev.boostDays, [dayIndex]: isChecked } }));
   const handleSave = (e) => { e.preventDefault(); socket.emit('update_config', form); toast.success("System configurations updated!"); };
+
+  const handleAddMenu = () => {
+    const id = newMenuName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if(!id) { toast.error("Please enter a valid menu name."); return; }
+    if(form.subMenus.find(m => m.id === id)) { toast.error("A menu with this name already exists."); return; }
+    
+    setForm({...form, subMenus: [...form.subMenus, {id, name: newMenuName}]});
+    setNewMenuName('');
+  };
+
+  const handleDeleteMenu = (idToRemove) => {
+    setForm({...form, subMenus: form.subMenus.filter(m => m.id !== idToRemove)});
+  };
 
   return (
     <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 className="page-title" style={{ margin: 0 }}>System Config</h1>
-          <p className="page-desc" style={{ margin: 0 }}>Adjust game economy, events, and network.</p>
+          <p className="page-desc" style={{ margin: 0 }}>Adjust branding, economy, and dynamic menus.</p>
         </div>
         <button type="button" className="claim-btn" style={{ padding: '10px 24px', fontSize: '0.9rem', display: 'flex', gap: '8px', alignItems: 'center' }} onClick={handleSave}>
           <CheckCircle size={18} /> Save Settings
@@ -783,10 +881,58 @@ const SystemConfig = ({ config }) => {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '20px' }}>
         
-        {/* Network Configuration Block */}
         <div className="bento-card">
           <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Network color="var(--primary)" size={18} /> Client Connection Setup
+            <Palette size={18} color="var(--primary)" /> Dynamic Branding
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="sleek-input-container">
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Shop Name</span>
+              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.shopName} onChange={e => setForm({...form, shopName: e.target.value})} />
+            </div>
+            <div className="sleek-input-container">
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Window Title</span>
+              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.windowTitle} onChange={e => setForm({...form, windowTitle: e.target.value})} />
+            </div>
+            <div className="sleek-input-container">
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Corner Logo URL/Path</span>
+              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.logoUrl} onChange={e => setForm({...form, logoUrl: e.target.value})} />
+            </div>
+            <div className="sleek-input-container">
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Hero Slide Image URL</span>
+              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.heroImageUrl || ''} onChange={e => setForm({...form, heroImageUrl: e.target.value})} />
+            </div>
+            <div className="sleek-input-container">
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Taskbar Icon URL/Path</span>
+              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.iconUrl} onChange={e => setForm({...form, iconUrl: e.target.value})} />
+            </div>
+          </div>
+        </div>
+
+        <div className="bento-card">
+          <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <LayoutList size={18} color="var(--primary)" /> Shop Sub-Menus
+          </h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '16px' }}>Manage the categories available in the Shop dropdown.</p>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+            {form.subMenus.map((menu) => (
+              <div key={menu.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.3)', padding: '10px 14px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                <span style={{ color: '#fff', fontSize: '0.85rem' }}>{menu.name} <span style={{color: 'var(--text-muted)', fontSize:'0.7rem'}}>({menu.id})</span></span>
+                <button className="admin-icon-btn" onClick={() => handleDeleteMenu(menu.id)} style={{ padding: '4px' }}><Trash2 size={14} color="#ef4444" /></button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input type="text" placeholder="New Menu Name (e.g., Snacks)" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} value={newMenuName} onChange={e => setNewMenuName(e.target.value)} />
+            <button type="button" className="claim-btn" style={{ padding: '0 16px', flexShrink: 0 }} onClick={handleAddMenu}>Add</button>
+          </div>
+        </div>
+
+        <div className="bento-card">
+          <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Network size={18} color="var(--primary)" /> Network & Cloud Setup
           </h3>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '16px', lineHeight: '1.5' }}>
             Configure where this client PC looks for the main cafe server. E.g., <span style={{color: '#fff', fontFamily: 'monospace'}}>192.168.1.100:3000</span>
@@ -797,12 +943,20 @@ const SystemConfig = ({ config }) => {
               <button type="button" className="claim-btn" style={{ padding: '0 16px', flexShrink: 0 }} onClick={() => { changeServerIP(localIp); toast.success("Client connection updated!"); }}>Apply</button>
             </div>
           </div>
+          
+          <div style={{ height: '1px', background: 'var(--border)', margin: '16px 0' }}></div>
+          
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', fontSize: '0.85rem', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.enableCloudSync} onChange={e => setForm({...form, enableCloudSync: e.target.checked})} style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }} />
+            {form.enableCloudSync ? <Cloud size={16} color="#22c55e" /> : <CloudOff size={16} color="#ef4444" />}
+            Enable Firebase Cloud Sync
+          </label>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '6px', marginLeft: '24px', lineHeight: '1.4' }}>When disabled, the system runs 100% offline using the local SQLite database. Firebase will not be updated.</p>
         </div>
 
-        {/* Base Economy & Tier Boundaries */}
         <div className="bento-card">
           <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Wallet color="var(--primary)" size={18} /> Economy & Tiers
+            <Wallet size={18} color="var(--primary)" /> Economy & Tiers
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div className="sleek-input-container">
@@ -822,10 +976,9 @@ const SystemConfig = ({ config }) => {
           </div>
         </div>
 
-        {/* Automated Event Multipliers */}
         <div className="bento-card">
           <h3 style={{ color: '#fff', fontSize: '1.05rem', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Zap color="var(--primary)" size={18} /> Automated Boost Events
+            <Zap size={18} color="var(--primary)" /> Automated Boost Events
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
@@ -859,7 +1012,7 @@ const SystemConfig = ({ config }) => {
   );
 };
 
-const HomeDashboard = ({ inventory, newsList, topPicks }) => {
+const HomeDashboard = ({ inventory, newsList, topPicks, config }) => {
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const blendedPhotoStyle = {
@@ -871,8 +1024,8 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
 
   const slides = [
     {
-      id: 1, title: "EXPERIENCE PREMIUM GAMING", desc: "Welcome to 4G Gamers. Enjoy high-performance rigs, ultra-fast internet, and an exclusive rewards program just for playing.",
-      color: "linear-gradient(135deg, rgba(193,35,32,0.6) 0%, rgba(10,10,10,0.95) 100%)", icon: <img src="./images/logo/logo2.png" alt="4G Gamers Logo" style={blendedPhotoStyle} />
+      id: 1, title: "EXPERIENCE PREMIUM GAMING", desc: `Welcome to ${config?.shopName || "4G Gamers"}. Enjoy high-performance rigs, ultra-fast internet, and an exclusive rewards program just for playing.`,
+      color: "linear-gradient(135deg, rgba(193,35,32,0.6) 0%, rgba(10,10,10,0.95) 100%)", icon: <img src={config?.heroImageUrl || config?.logoUrl || "./images/logo/logo2.png"} alt="Hero" style={blendedPhotoStyle} />
     },
     {
       id: 2, title: "RANK UP FOR REWARDS", desc: "Earn XP every minute you play. Level up from Bronze to Gold to unlock premium Battle Passes, Steam points, and free PC time.",
@@ -890,12 +1043,15 @@ const HomeDashboard = ({ inventory, newsList, topPicks }) => {
   }, [slides.length]);
 
   const featuredItems = [];
-  const allItems = [
-    ...Object.values(inventory?.foods || {}).map(item => ({...item, categoryId: 'foods'})), 
-    ...Object.values(inventory?.drinks || {}).map(item => ({...item, categoryId: 'drinks'})), 
-    ...Object.values(inventory?.battlepass || {}).map(item => ({...item, categoryId: 'battlepass'})), 
-    ...Object.values(inventory?.ecoin || {}).map(item => ({...item, categoryId: 'ecoin'}))
-  ];
+  const allItems = [];
+  
+  if (config?.subMenus) {
+     config.subMenus.forEach(menu => {
+         const itemsInMenu = Object.values(inventory?.[menu.id] || {}).map(item => ({...item, categoryId: menu.id}));
+         allItems.push(...itemsInMenu);
+     });
+  }
+  allItems.push(...Object.values(inventory?.battlepass || {}).map(item => ({...item, categoryId: 'battlepass'})));
 
   if (topPicks && topPicks.length > 0) {
     topPicks.forEach(pickName => {
@@ -1043,7 +1199,7 @@ const TierGuideModal = ({ onClose, config }) => {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
         <div className="auth-card" style={{ position: 'relative' }}>
-          <button className="close-modal" onClick={onClose}><X size={20}/></button>
+          <button className="close-modal" onClick={onClose}><X size={20} /></button>
           {page === 1 && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '10px 0' }}>
               <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', border: '1px solid var(--border)' }}><Trophy size={28} color="var(--primary)" /></div>
@@ -1113,8 +1269,8 @@ const ProductCard = ({ item, categoryId, totalXp, lifetimeXp, config, currentUse
       {isAdmin && (
         <div className="admin-card-controls" style={{ top: isTopPick ? '24px' : '8px' }}>
           <button className="admin-icon-btn" onClick={() => onToggleTopPick(item.name, isTopPick)} title={isTopPick ? "Remove from Top Picks" : "Add to Top Picks"}><Flame size={14} color={isTopPick ? "#f97316" : "#fff"} /></button>
-          <button className="admin-icon-btn" onClick={() => onEdit('edit', categoryId, item)} title="Edit"><Edit size={14}/></button>
-          <button className="admin-icon-btn" onClick={() => onDelete(categoryId, item.id)} title="Delete"><Trash2 size={14}/></button>
+          <button className="admin-icon-btn" onClick={() => onEdit('edit', categoryId, item)} title="Edit"><Edit size={14} /></button>
+          <button className="admin-icon-btn" onClick={() => onDelete(categoryId, item.id)} title="Delete"><Trash2 size={14} /></button>
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingLeft: '4px', cursor: isAdmin ? 'pointer' : 'default' }} onClick={() => isAdmin && onToggleStock(categoryId, item.id, inStock)}>
@@ -1138,7 +1294,7 @@ const ProductCard = ({ item, categoryId, totalXp, lifetimeXp, config, currentUse
           cursor: isBuyDisabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
         }}
       >
-        {isAdmin ? 'ADMIN VIEW' : isTierLocked ? (<><Lock size={12}/> {safePrice} XP</>) : <><ShoppingCart size={14} /> {safePrice} XP</>}
+        {isAdmin ? 'ADMIN VIEW' : isTierLocked ? (<><Lock size={12} /> {safePrice} XP</>) : <><ShoppingCart size={14} /> {safePrice} XP</>}
       </button>
     </div>
   );
@@ -1151,26 +1307,45 @@ function AppContent() {
   const [lifetimeXp, setLifetimeXp] = useState(0);
   
   const [sysConfig, setSysConfig] = useState({ 
+    shopName: "4G GAMERS",
+    windowTitle: "4G GAMERS HUB | EARN POINTS",
+    logoUrl: "./images/logo/logo2.png",
+    heroImageUrl: "./images/logo/logo2.png",
+    iconUrl: "./images/logo/logo2.png",
     silverXp: 2000, goldXp: 5000, xpPerHour: 1800, 
     boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
-    enableMidnightBoost: false, boostMultiplier: 2
+    enableMidnightBoost: false, boostMultiplier: 2,
+    enableCloudSync: true,
+    subMenus: [
+      { id: 'foods', name: 'Foods' },
+      { id: 'drinks', name: 'Drinks' },
+      { id: 'ecoin', name: 'E-Coin' }
+    ]
   });
   
   const sysConfigRef = useRef(sysConfig);
-  useEffect(() => { sysConfigRef.current = sysConfig; }, [sysConfig]);
+  useEffect(() => { 
+    sysConfigRef.current = sysConfig; 
+    document.title = sysConfig.windowTitle;
+    const fav = document.getElementById('appFavicon');
+    if (fav) fav.href = sysConfig.iconUrl;
+  }, [sysConfig]);
 
   const [newsList, setNewsList] = useState([]);
   const [topPicks, setTopPicks] = useState([]);
   const [cart, setCart] = useState([]);
   const [showCartModal, setShowCartModal] = useState(false);
-  const [inventory, setInventory] = useState({ foods: {}, drinks: {}, battlepass: {}, ecoin: {} });
+  const [inventory, setInventory] = useState({});
 
   const [isShopOpen, setIsShopOpen] = useState(false); 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [authView, setAuthView] = useState('login'); 
-  const [authForm, setAuthForm] = useState({ name: '', username: '', password: '', newPassword: '' });
+  
+  const [authForm, setAuthForm] = useState({ firstName: '', lastName: '', email: '', username: '', password: '', confirmPassword: '' });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTierGuide, setShowTierGuide] = useState(false);
@@ -1188,21 +1363,28 @@ function AppContent() {
   useEffect(() => {
     socket.on('connect', () => { setIsConnected(true); socket.emit('request_initial_data'); });
     socket.on('disconnect', () => setIsConnected(false));
-    socket.on('sync_inventory', (data) => setInventory(data || { foods: {}, drinks: {}, battlepass: {}, ecoin: {} }));
+    socket.on('sync_inventory', (data) => setInventory(data || {}));
     socket.on('sync_news', (data) => setNewsList(Array.isArray(data) ? data : []));
-    socket.on('sync_config', (data) => setSysConfig(data || sysConfigRef.current));
+    socket.on('sync_config', (data) => {
+      if(data) {
+        setSysConfig(prev => ({
+          ...prev, ...data, subMenus: data.subMenus || prev.subMenus
+        }));
+      }
+    });
     socket.on('sync_top_picks', (data) => setTopPicks(Array.isArray(data) ? data : []));
 
     socket.on('login_success', (user) => {
       setCurrentUser(user); setTotalXp(user.xp); setLifetimeXp(user.lifetimeXp);
-      setShowLoginModal(false); toast.success(`Welcome back, ${user.name}!`);
+      setShowLoginModal(false); 
+      toast.success(`Welcome back, ${user.firstName || user.name || user.username}!`);
       if (user.isAdmin === true || user.isAdmin === 1 || user.username === 'admin') navigate('/dashboard');
     });
 
     socket.on('password_reset_success', (msg) => {
       toast.success(msg);
       setAuthView('login');
-      setAuthForm({ name: '', username: '', password: '', newPassword: '' });
+      setAuthForm({ firstName: '', lastName: '', email: '', username: '', password: '', confirmPassword: '' });
     });
 
     socket.on('login_error', (msg) => toast.error(msg));
@@ -1233,12 +1415,25 @@ function AppContent() {
       if (!safeUsername || !authForm.password) return toast.error("Please fill all fields.");
       socket.emit('login', { username: safeUsername, password: authForm.password });
     } else if (authView === 'register') {
-      if (!safeUsername || !authForm.password || !authForm.name) return toast.error("Please fill all fields.");
+      if (!authForm.firstName || !authForm.lastName || !authForm.email || !safeUsername || !authForm.password) return toast.error("Please fill all fields.");
+      if (authForm.password !== authForm.confirmPassword) return toast.error("Passwords do not match!");
       if (authForm.password.length < 6) return toast.error("Password must be at least 6 characters.");
-      socket.emit('register', { username: safeUsername, password: authForm.password, name: authForm.name });
+      
+      socket.emit('register', { 
+        username: safeUsername, 
+        password: authForm.password, 
+        firstName: authForm.firstName.trim(),
+        lastName: authForm.lastName.trim(),
+        email: authForm.email.trim()
+      });
     } else if (authView === 'forgot') {
-      if (!safeUsername || !authForm.name) return toast.error("Please fill all fields.");
-      socket.emit('reset_forgot_password', { username: safeUsername, name: authForm.name, newPassword: '123' });
+      if (!authForm.firstName || !authForm.lastName || !authForm.email || !safeUsername) return toast.error("Please fill all verification fields.");
+      socket.emit('reset_forgot_password', { 
+        username: safeUsername, 
+        firstName: authForm.firstName.trim(),
+        lastName: authForm.lastName.trim(),
+        email: authForm.email.trim()
+      });
     }
   };
 
@@ -1248,8 +1443,15 @@ function AppContent() {
     toast.success("Logged out successfully."); navigate('/');
   };
 
-  const openLoginModal = () => { setAuthView('login'); setAuthForm({ name: '', username: '', password: '', newPassword: '' }); setShowLoginModal(true); };
-  const claimXp = (amount) => { if (!currentUser) return; socket.emit('claim_xp', { username: currentUser.username, amount }); toast.success(`Claimed ${amount} XP!`); };
+  const openLoginModal = () => { 
+    setAuthView('login'); 
+    setAuthForm({ firstName: '', lastName: '', email: '', username: '', password: '', confirmPassword: '' }); 
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setShowLoginModal(true); 
+  };
+  
+  const claimXp = (amount) => { if (!currentUser) return; socket.emit('claim_xp', { username: currentUser.username, amount }); };
 
   const handleAddToCart = (item, price) => {
     if (!currentUser) { openLoginModal(); return; }
@@ -1300,7 +1502,7 @@ function AppContent() {
     setEditorModal({ open: false, mode: 'add', category: '', item: null });
   };
 
-  const requestDelete = (cat, id) => setDeleteModal({ open: true, category: cat, id, name: inventory[cat][id]?.name || 'Unknown' });
+  const requestDelete = (cat, id) => setDeleteModal({ open: true, category: cat, id, name: inventory[cat]?.[id]?.name || 'Unknown' });
   const confirmDelete = () => { socket.emit('admin_delete_product', { category: deleteModal.category, targetId: deleteModal.id }); setDeleteModal({ open: false, category: '', id: '', name: '' }); };
   const toggleStock = (cat, id, currentStock) => { socket.emit('admin_toggle_stock', { category: cat, targetId: id, currentStock: !currentStock }); };
   const toggleTopPick = (name, isCurrentlyTopPick) => { socket.emit('admin_toggle_top_pick', { name, isTopPick: isCurrentlyTopPick }); };
@@ -1316,12 +1518,13 @@ function AppContent() {
       <div style={{ position: 'relative', textAlign: 'center', marginBottom: '24px' }}>
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{title}</h1>
         <p className="page-desc" style={{ margin: 0, fontSize: '0.85rem' }}>{desc}</p>
-        {isAdmin && <button className="claim-btn" style={{ position: 'absolute', right: '0', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '8px', alignItems: 'center' }} onClick={() => openEditor('add', catKey)}><Plus size={16}/> Add New</button>}
+        {isAdmin && <button className="claim-btn" style={{ position: 'absolute', right: '0', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '8px', alignItems: 'center' }} onClick={() => openEditor('add', catKey)}><Plus size={16} /> Add New</button>}
       </div>
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.values(inventory[catKey] || {}).map(item => (
           <ProductCard key={item.id} item={item} totalXp={totalXp} lifetimeXp={lifetimeXp} config={sysConfig} currentUser={currentUser} onAddToCart={handleAddToCart} onLockedClick={() => setShowTierGuide(true)} categoryId={catKey} isAdmin={isAdmin} onEdit={openEditor} onDelete={requestDelete} onToggleStock={toggleStock} onToggleTopPick={toggleTopPick} topPicks={topPicks} />
         ))}
+        {Object.values(inventory[catKey] || {}).length === 0 && <p style={{color: 'var(--text-muted)'}}>No items in this category yet.</p>}
       </div>
     </>
   );
@@ -1355,39 +1558,69 @@ function AppContent() {
         <div className="modal-overlay" onClick={() => setShowLoginModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="auth-card" style={{ maxWidth: '100%', position: 'relative' }}>
-              <button className="close-modal" onClick={() => setShowLoginModal(false)}><X size={20}/></button>
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}><img src="./images/logo/logo2.png" alt="Logo" style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '8px' }} /></div>
+              <button className="close-modal" onClick={() => setShowLoginModal(false)}><X size={20} /></button>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}><img src={sysConfig.logoUrl} alt="Logo" style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '8px' }} /></div>
               
               <h2 style={{ textAlign: 'center', marginBottom: '24px', fontSize: '1.5rem', color: '#fff' }}>
                 {authView === 'login' ? 'Sign In' : authView === 'register' ? 'Create Account' : 'Reset Password'}
               </h2>
               
               <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                
                 {authView !== 'login' && (
-                  <div className="sleek-input-container">
-                    <input type="text" placeholder={authView === 'forgot' ? "Full Name (for verification)" : "Full Name"} className="sleek-input" required value={authForm.name} onChange={e => setAuthForm({...authForm, name: e.target.value})} />
-                    <BadgeCheck size={16} className="sleek-icon" />
-                  </div>
+                  <>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <div className="sleek-input-container" style={{ flex: 1 }}>
+                        <input type="text" placeholder="First Name" className="sleek-input" required value={authForm.firstName} onChange={e => setAuthForm({...authForm, firstName: e.target.value})} />
+                        <UserCircle size={16} className="sleek-icon" />
+                      </div>
+                      <div className="sleek-input-container" style={{ flex: 1 }}>
+                        <input type="text" placeholder="Last Name" className="sleek-input" required value={authForm.lastName} onChange={e => setAuthForm({...authForm, lastName: e.target.value})} />
+                        <UserCircle size={16} className="sleek-icon" />
+                      </div>
+                    </div>
+                    <div className="sleek-input-container">
+                      <input type="email" placeholder="Email Address" className="sleek-input" required value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} />
+                      <Mail size={16} className="sleek-icon" />
+                    </div>
+                  </>
                 )}
+
                 <div className="sleek-input-container">
                   <input type="text" placeholder="Username" className="sleek-input" required value={authForm.username} onChange={e => setAuthForm({...authForm, username: e.target.value})} />
                   <User size={16} className="sleek-icon" />
                 </div>
+                
                 {authView !== 'forgot' && (
-                  <div className="sleek-input-container">
-                    <input type="password" placeholder="Password" className="sleek-input" required value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
-                    <Lock size={16} className="sleek-icon" />
-                  </div>
+                  <>
+                    <div className="sleek-input-container">
+                      <input type={showPassword ? "text" : "password"} placeholder="Password" className="sleek-input" required value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} />
+                      <Lock size={16} className="sleek-icon" />
+                      <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+
+                    {authView === 'register' && (
+                      <div className="sleek-input-container">
+                        <input type={showConfirmPassword ? "text" : "password"} placeholder="Verify Password" className="sleek-input" required value={authForm.confirmPassword} onChange={e => setAuthForm({...authForm, confirmPassword: e.target.value})} />
+                        <Lock size={16} className="sleek-icon" />
+                        <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                          {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {authView === 'forgot' && (
                   <p style={{ color: '#e2e8f0', fontSize: '0.85rem', textAlign: 'center', margin: '4px 0' }}>
-                    If verified, your password will be reset to the default: <strong style={{color: '#fff'}}>123</strong>
+                    If verified against our records, your password will be reset to: <strong style={{color: '#fff'}}>123</strong>
                   </p>
                 )}
 
                 <button type="submit" className="claim-btn" style={{ padding: '12px', marginTop: '10px' }}>
-                  {authView === 'login' ? 'Sign In' : authView === 'register' ? 'Sign Up' : 'Reset to Default (123)'}
+                  {authView === 'login' ? 'Sign In' : authView === 'register' ? 'Register Account' : 'Reset to Default (123)'}
                 </button>
               </form>
 
@@ -1417,7 +1650,7 @@ function AppContent() {
         <div className="modal-overlay" onClick={() => setShowCartModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
             <div className="auth-card" style={{ position: 'relative' }}>
-              <button className="close-modal" onClick={() => setShowCartModal(false)}><X size={20}/></button>
+              <button className="close-modal" onClick={() => setShowCartModal(false)}><X size={20} /></button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
                 <ShoppingCart size={24} color="var(--primary)" />
                 <h2 style={{ color: '#fff', fontSize: '1.3rem', margin: 0 }}>Your Cart</h2>
@@ -1449,7 +1682,7 @@ function AppContent() {
         <div className="modal-overlay" onClick={() => setEditorModal({ open: false, mode: 'add', category: '', item: null })}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="auth-card" style={{ maxWidth: '100%', position: 'relative' }}>
-              <button className="close-modal" onClick={() => setEditorModal({ open: false, mode: 'add', category: '', item: null })}><X size={20}/></button>
+              <button className="close-modal" onClick={() => setEditorModal({ open: false, mode: 'add', category: '', item: null })}><X size={20} /></button>
               <h2 style={{ textAlign: 'center', marginBottom: '24px', fontSize: '1.25rem', color: '#fff', textTransform: 'capitalize' }}>{editorModal.mode} {editorModal.category.slice(0, -1)}</h2>
               <form onSubmit={saveProduct} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div className="sleek-input-container"><span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Product Name:</span><input type="text" className="sleek-input" required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /></div>
@@ -1499,7 +1732,7 @@ function AppContent() {
       )}
 
       <div className="sidebar">
-        <div className="brand"><img src="./images/logo/logo2.png" alt="Logo" style={{ width: '24px', height: '24px', objectFit: 'cover', borderRadius: '4px' }} /> 4G GAMERS</div>
+        <div className="brand"><img src={sysConfig.logoUrl} alt="Logo" style={{ width: '24px', height: '24px', objectFit: 'cover', borderRadius: '4px' }} /> {sysConfig.shopName}</div>
         <div className="nav-menu" style={{ height: '100%', display: 'flex', flexDirection: 'column', paddingTop: '12px' }}>
           
           <NavLink to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} style={{ marginBottom: '8px' }}><Home size={16} /> Home</NavLink>
@@ -1518,9 +1751,12 @@ function AppContent() {
 
           {isShopOpen && (
             <div className="sub-menu">
-              <NavLink to="/shop/foods" className="nav-link sub-link"><Pizza size={14} /> Foods</NavLink>
-              <NavLink to="/shop/drinks" className="nav-link sub-link"><Coffee size={14} /> Drinks</NavLink>
-              <NavLink to="/shop/ecoin" className="nav-link sub-link"><Coins size={14} /> E-Coin</NavLink>
+              {sysConfig.subMenus.map(menu => (
+                <NavLink key={menu.id} to={`/shop/${menu.id}`} className="nav-link sub-link">
+                  <div style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', marginRight: '8px' }} />
+                  {menu.name}
+                </NavLink>
+              ))}
             </div>
           )}
 
@@ -1579,7 +1815,9 @@ function AppContent() {
                     <div className="drop-header">
                       <div className="drop-avatar"><User size={24} color="#ccc" /></div>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span className="drop-name">{currentUser.name}</span>
+                        <span className="drop-name" style={{ textTransform: 'capitalize' }}>
+                          {currentUser.firstName && currentUser.lastName ? `${currentUser.firstName} ${currentUser.lastName}` : currentUser.name}
+                        </span>
                         <span className="drop-user">@{currentUser.username}</span>
                       </div>
                     </div>
@@ -1629,11 +1867,12 @@ function AppContent() {
 
         <div className="page-content" onClick={() => showUserMenu && setShowUserMenu(false)}>
           <Routes>
-            <Route path="/" element={<HomeDashboard inventory={inventory} newsList={newsList} topPicks={topPicks} />} />
+            <Route path="/" element={<HomeDashboard inventory={inventory} newsList={newsList} topPicks={topPicks} config={sysConfig} />} />
             
-            <Route path="/shop/foods" element={renderCategoryPage("Foods", "Exchange your XP for snacks.", "foods")} />
-            <Route path="/shop/drinks" element={renderCategoryPage("Drinks", "Grab a cold drink to keep grinding.", "drinks")} />
-            <Route path="/shop/ecoin" element={renderCategoryPage("E-Coin", "Exchange your Wallet XP to redeem E-Coins.", "ecoin")} />
+            {sysConfig.subMenus.map(menu => (
+              <Route key={menu.id} path={`/shop/${menu.id}`} element={renderCategoryPage(menu.name, `Exchange your XP for ${menu.name.toLowerCase()}.`, menu.id)} />
+            ))}
+
             <Route path="/battlepass" element={renderCategoryPage("Battle Pass", "Reach tier requirements by playing to unlock and redeem exclusive rewards.", "battlepass")} />
             
             <Route path="/history" element={!isAdmin && currentUser ? <PurchaseHistory currentUser={currentUser} /> : <h1 className="page-title" style={{ textAlign: 'center', fontSize: '1.5rem' }}>Access Denied.</h1>} />
