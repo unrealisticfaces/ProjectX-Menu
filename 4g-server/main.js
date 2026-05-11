@@ -12,10 +12,7 @@ const admin = require("firebase-admin");
 // ==========================================
 // 🔥 FIREBASE URLS (TWO DATABASES) 🔥
 // ==========================================
-// 1. Paste your LICENSING Database URL here:
 const LICENSING_DB_URL = "https://projectx-data-default-rtdb.asia-southeast1.firebasedatabase.app";
-
-// 2. Paste your STORE MANAGER (XP/Users) Database URL here:
 const STORE_DB_URL = "https://posinventory-77b87-default-rtdb.firebaseio.com";
 // ==========================================
 
@@ -30,56 +27,48 @@ let db;
 let isServerRunning = false;
 let fdb = null;
 
+// Prevent memory leaks
+let batchInterval = null;
+let heartbeatInterval = null;
+
 const userDataPath = app.getPath('userData');
 const dbPath = path.join(userDataPath, '4g_database.db');
 const iniPath = path.join(userDataPath, 'admin_log.ini');
 const configPath = path.join(userDataPath, 'server_config.json');
+const cafeConfigPath = path.join(userDataPath, 'cafe_config.json');
 
-// Initialize INI
 if (!fs.existsSync(iniPath)) fs.writeFileSync(iniPath, '[AdminLogs]\n');
 function writeAdminLog(action) {
   const ts = new Date().toISOString();
   fs.appendFile(iniPath, `${ts}="${action}"\n`, () => {});
 }
 
-// ==========================================
-// 🔥 INITIALIZE FIREBASE ADMIN (STORE DB) 🔥
-// ==========================================
 try {
-  let keyPath;
-  if (app.isPackaged) {
-    keyPath = path.join(path.dirname(app.getPath('exe')), 'firebase-admin-key.json');
-  } else {
-    keyPath = path.join(__dirname, 'firebase-admin-key.json');
+  let keyPath = app.isPackaged ? path.join(path.dirname(app.getPath('exe')), 'firebase-admin-key.json') : path.join(__dirname, 'firebase-admin-key.json');
+
+  if (fs.existsSync(keyPath)) {
+    const rawKey = fs.readFileSync(keyPath, 'utf8');
+    const serviceAccount = JSON.parse(rawKey);
+
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      databaseURL: STORE_DB_URL 
+    });
+    
+    fdb = admin.database();
+    writeAdminLog("✅ Firebase Admin Key Loaded Successfully!");
+
+    fdb.ref(".info/connected").on("value", function(snap) {
+      if (snap.val() === true) {
+        writeAdminLog("🌐 Firebase Network Connection Established!");
+      } else {
+        writeAdminLog("⚠️ Firebase Network Disconnected/Reconnecting...");
+      }
+    });
   }
-
-  if (!fs.existsSync(keyPath)) {
-    throw new Error(`Missing key file! Please place firebase-admin-key.json next to the .exe file.`);
-  }
-
-  const rawKey = fs.readFileSync(keyPath, 'utf8');
-  const serviceAccount = JSON.parse(rawKey);
-
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: STORE_DB_URL 
-  });
-  
-  fdb = admin.database();
-  writeAdminLog("✅ Firebase Admin Key Loaded Successfully!");
-
-  fdb.ref(".info/connected").on("value", function(snap) {
-    if (snap.val() === true) {
-      writeAdminLog("🌐 Firebase Network Connection Established!");
-    } else {
-      writeAdminLog("⚠️ Firebase Network Disconnected/Reconnecting...");
-    }
-  });
-
 } catch (e) {
   writeAdminLog(`❌ Firebase Setup Error: ${e.message}`);
 }
-// ==========================================
 
 function loadConfig() {
   if (fs.existsSync(configPath)) {
@@ -173,9 +162,6 @@ ipcMain.handle('verify-license', async (event, key) => {
   }
 });
 
-// ==========================================
-// CORE SERVER ENGINE LOGIC
-// ==========================================
 function startServerEngine(config) {
   if (isServerRunning) return;
 
@@ -215,15 +201,17 @@ function startServerEngine(config) {
   function broadcastNews() { db.all("SELECT * FROM news ORDER BY timestamp DESC", [], (err, rows) => { if (!err) io.emit('sync_news', rows); }); }
   function broadcastTopPicks() { db.all("SELECT name FROM top_picks", [], (err, rows) => { if (!err) io.emit('sync_top_picks', rows.map(r => r.name)); }); }
 
-  let systemConfig = { 
+  const defaultSystemConfig = { 
     shopName: "4G GAMERS",
     windowTitle: "4G GAMERS HUB | EARN POINTS",
     logoUrl: "./images/logo/logo2.png",
     heroImageUrl: "./images/logo/logo2.png",
     iconUrl: "./images/logo/logo2.png",
+    themeColor: "red",
     silverXp: 2000, 
     goldXp: 5000, 
     xpPerHour: 1800, 
+    boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
     boostMultiplier: 2, 
     enableMidnightBoost: false,
     enableCloudSync: true, 
@@ -233,6 +221,17 @@ function startServerEngine(config) {
       { id: 'ecoin', name: 'E-Coin' }
     ]
   };
+
+  let systemConfig = { ...defaultSystemConfig };
+  if (fs.existsSync(cafeConfigPath)) {
+    try {
+      const savedCafeConfig = JSON.parse(fs.readFileSync(cafeConfigPath, 'utf8'));
+      systemConfig = { ...defaultSystemConfig, ...savedCafeConfig }; 
+      writeAdminLog("✅ Loaded persistent Cafe Configuration.");
+    } catch (e) {
+      writeAdminLog(`❌ Failed to parse cafe_config.json: ${e.message}`);
+    }
+  }
 
   const connectedUsers = {}; 
   const claimCooldowns = {};           
@@ -318,9 +317,14 @@ function startServerEngine(config) {
       db.get(`SELECT firstName, lastName, email FROM users WHERE username = ?`, [safeUsername], (err, row) => {
         if (err || !row) return socket.emit('login_error', 'User account not found.');
         
-        if (row.firstName.toLowerCase() !== firstName.trim().toLowerCase() || 
-            row.lastName.toLowerCase() !== lastName.trim().toLowerCase() || 
-            row.email.toLowerCase() !== email.trim().toLowerCase()) {
+        // Safety check to prevent .toLowerCase() crash on old null DB records
+        const dbFirst = (row.firstName || "").toLowerCase();
+        const dbLast = (row.lastName || "").toLowerCase();
+        const dbEmail = (row.email || "").toLowerCase();
+
+        if (dbFirst !== firstName.trim().toLowerCase() || 
+            dbLast !== lastName.trim().toLowerCase() || 
+            dbEmail !== email.trim().toLowerCase()) {
             return socket.emit('login_error', 'Verification failed. Details do not match our records.');
         }
 
@@ -449,10 +453,16 @@ function startServerEngine(config) {
       const isCloudNowOn = newConfig.enableCloudSync;
 
       systemConfig = newConfig; 
+      
+      try {
+        fs.writeFileSync(cafeConfigPath, JSON.stringify(systemConfig, null, 2));
+      } catch (err) {
+        writeAdminLog(`❌ Failed to save cafe_config.json: ${err.message}`);
+      }
+
       writeAdminLog(`Updated Global System Configuration parameters`); 
       io.emit('sync_config', systemConfig); 
 
-      // 🔥 THE SMART CATCH-UP LOGIC
       if (wasCloudOff && isCloudNowOn && fdb) {
         writeAdminLog(`☁️ Cloud Sync Re-enabled: Initiating Smart Catch-Up...`);
         
@@ -494,7 +504,8 @@ function startServerEngine(config) {
     });
   });
 
-  setInterval(() => {
+  // Assign to variable for safe clearing
+  batchInterval = setInterval(() => {
     if (fdb && isServerRunning && systemConfig.enableCloudSync && Object.keys(pendingFirebaseUpdates).length > 0) {
       const batchToPush = { ...pendingFirebaseUpdates };
       pendingFirebaseUpdates = {}; 
@@ -504,7 +515,8 @@ function startServerEngine(config) {
     }
   }, 15000);
 
-  setInterval(() => {
+  // Assign to variable for safe clearing
+  heartbeatInterval = setInterval(() => {
     if (!fdb || !isServerRunning || !systemConfig.enableCloudSync) return;
     db.all(`SELECT username, xp, lifetimeXp FROM users WHERE isOnline = 1 AND isAdmin = 0`, [], (err, rows) => {
       if (err || !rows || rows.length === 0) return;
@@ -579,6 +591,11 @@ ipcMain.on('start-server', (event, config) => {
 
 ipcMain.on('stop-server', () => {
   if (!isServerRunning) return;
+  
+  // Safe Interval clear
+  if (batchInterval) clearInterval(batchInterval);
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+
   io.close();
   httpServer.close(() => {
     db.close();
