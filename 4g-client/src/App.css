@@ -21,7 +21,7 @@ html, body {
 ::-webkit-scrollbar { width: 6px; } 
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(193, 35, 32, 0.8); }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
 
 * {
   box-sizing: border-box;
@@ -55,16 +55,18 @@ body {
   z-index: -1;
 }
 
+/* 🔥 DYNAMIC BACKGROUND GLOW FIX */
 .app-container::before {
   top: -10%; left: -10%;
   width: 50vw; height: 50vw;
-  background: radial-gradient(circle, rgba(193, 35, 32, 0.15) 0%, transparent 60%);
+  background: radial-gradient(circle, var(--primary-soft) 0%, transparent 60%);
 }
 
 .app-container::after {
   bottom: -20%; right: -10%;
   width: 60vw; height: 60vw;
-  background: radial-gradient(circle, rgba(214, 58, 55, 0.08) 0%, transparent 60%);
+  background: radial-gradient(circle, var(--primary-soft) 0%, transparent 60%);
+  opacity: 0.6;
 }
 
 .sidebar {
@@ -274,9 +276,11 @@ body {
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.8); padding: 32px; max-width: 380px; margin: auto;
 }
 
+/* 🔥 DYNAMIC CARD HOVER GLOW FIX */
 .card:hover {
-  transform: translateY(-6px) scale(1.02); border-color: rgba(193, 35, 32, 0.8);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(193, 35, 32, 0.1);
+  transform: translateY(-6px) scale(1.02); 
+  border-color: var(--primary);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), inset 0 0 20px var(--primary-soft);
 }
 
 .sleek-table {
@@ -310,12 +314,20 @@ body {
   color: #fff !important; box-shadow: 0 4px 12px var(--primary-glow) !important;
 }
 
-.search-glow-input { border-color: rgba(193, 35, 32, 0.3) !important; box-shadow: 0 0 10px rgba(193, 35, 32, 0.1) !important; }
-.search-glow-input:focus {
-  border-color: var(--primary) !important; background: rgba(0, 0, 0, 0.8) !important;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(193, 35, 32, 0.5), 0 0 15px rgba(193, 35, 32, 0.4) !important;
+/* 🔥 DYNAMIC SEARCH BAR GLOW FIX */
+.search-glow-input { 
+  border-color: var(--primary-soft) !important; 
+  box-shadow: 0 0 10px var(--primary-soft) !important; 
 }
-.search-glow-input:focus + .sleek-icon { color: var(--primary) !important; filter: drop-shadow(0 0 4px var(--primary-glow)); }
+.search-glow-input:focus {
+  border-color: var(--primary) !important; 
+  background: rgba(0, 0, 0, 0.8) !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--primary-glow), 0 0 15px var(--primary-glow) !important;
+}
+.search-glow-input:focus + .sleek-icon { 
+  color: var(--primary) !important; 
+  filter: drop-shadow(0 0 4px var(--primary-glow)); 
+}
 
 .admin-card-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 10; }
 .admin-icon-btn {

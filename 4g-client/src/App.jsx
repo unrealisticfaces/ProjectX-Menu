@@ -6,6 +6,17 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsToolti
 import { io } from 'socket.io-client';
 import './App.css';
 
+// 🔥 THE DYNAMIC THEME ENGINE
+const THEMES = {
+  red: { primary: '#c12320', hover: '#d63a37', glow: 'rgba(193, 35, 32, 0.5)', soft: 'rgba(193, 35, 32, 0.15)' },
+  yellow: { primary: '#eab308', hover: '#facc15', glow: 'rgba(234, 179, 8, 0.5)', soft: 'rgba(234, 179, 8, 0.15)' },
+  gray: { primary: '#9ca3af', hover: '#d1d5db', glow: 'rgba(156, 163, 175, 0.5)', soft: 'rgba(156, 163, 175, 0.15)' },
+  green: { primary: '#22c55e', hover: '#4ade80', glow: 'rgba(34, 197, 94, 0.5)', soft: 'rgba(34, 197, 94, 0.15)' },
+  pink: { primary: '#ec4899', hover: '#f472b6', glow: 'rgba(236, 72, 153, 0.5)', soft: 'rgba(236, 72, 153, 0.15)' },
+  blue: { primary: '#3b82f6', hover: '#60a5fa', glow: 'rgba(59, 130, 246, 0.5)', soft: 'rgba(59, 130, 246, 0.15)' },
+  violet: { primary: '#8b5cf6', hover: '#a78bfa', glow: 'rgba(139, 92, 246, 0.5)', soft: 'rgba(139, 92, 246, 0.15)' }
+};
+
 const savedServerIp = localStorage.getItem('4g_server_ip') || 'http://localhost:3000';
 const socket = io(savedServerIp, { transports: ['websocket'] });
 
@@ -16,6 +27,17 @@ const changeServerIP = (newIp) => {
   socket.io.uri = finalUrl;
   socket.disconnect();
   socket.connect();
+};
+
+const formatDate = (timestamp) => {
+  if (!timestamp) return 'Unknown Date';
+  try { return new Date(timestamp).toLocaleString(); } 
+  catch (e) { return 'Invalid Date'; }
+};
+const formatShortDate = (timestamp) => {
+  if (!timestamp) return 'Unk';
+  try { return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } 
+  catch (e) { return 'Unk'; }
 };
 
 const getTier = (lifetimeXp, config) => {
@@ -90,12 +112,7 @@ const LiveXpHud = ({ currentUser, sysConfig, onClaimXp }) => {
       <button 
         className="claim-btn" 
         disabled={isClaimDisabled}
-        style={{ 
-          padding: '4px 10px', 
-          opacity: isClaimDisabled ? 0.5 : 1,
-          cursor: isClaimDisabled ? 'not-allowed' : 'pointer',
-          minWidth: '75px'
-        }} 
+        style={{ padding: '4px 10px', opacity: isClaimDisabled ? 0.5 : 1, cursor: isClaimDisabled ? 'not-allowed' : 'pointer', minWidth: '75px' }} 
         onClick={() => {
           if (!currentUser) { toast.error("Create an account or sign in to claim your XP!"); return; }
           const xpToClaim = Math.floor(pendingXp);
@@ -132,18 +149,14 @@ const LeaderboardWidget = ({ layout = 'vertical' }) => {
       ) : (
         <div className={layout === 'horizontal' ? "leaderboard-list-horizontal" : "leaderboard-list"}>
           {topPlayers.map((player, idx) => {
-            const displayName = player.firstName && player.lastName ? `${player.firstName} ${player.lastName}` : (player.name || "Anonymous");
+            const displayName = player.firstName && player.lastName ? `${player.firstName} ${player.lastName}` : (player.name || player.username || "Anonymous");
             return (
               <div key={player.username} className="leaderboard-item" style={{ background: bgColors[idx], border: `1px solid ${borderColors[idx]}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="player-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <Medal size={22} color={medalColors[idx]} /> 
-                  <span className="player-name" style={{ fontWeight: 'bold', color: '#fff', textTransform: 'capitalize' }}>
-                    {displayName}
-                  </span>
+                  <span className="player-name" style={{ fontWeight: 'bold', color: '#fff', textTransform: 'capitalize' }}>{displayName}</span>
                 </div>
-                <span className="xp-score" style={{ fontWeight: 'bold', color: medalColors[idx] }}>
-                  {player.lifetimeXp || 0} XP
-                </span>
+                <span className="xp-score" style={{ fontWeight: 'bold', color: medalColors[idx] }}>{player.lifetimeXp || 0} XP</span>
               </div>
             );
           })}
@@ -158,7 +171,7 @@ const RecentActivityWidget = () => {
 
   useEffect(() => {
     socket.on('sync_all_orders', (orders) => {
-      let allActivity = (Array.isArray(orders) ? orders : []).filter(p => p.status === 'completed').map(p => ({ username: p.username, item: p.itemName, time: p.timestamp }));
+      let allActivity = (Array.isArray(orders) ? orders : []).filter(p => p.status === 'completed').map(p => ({ username: p.username, item: p.itemName, time: p.timestamp || Date.now() }));
       allActivity.sort((a, b) => b.time - a.time);
       setActivities(allActivity.slice(0, 4));
     });
@@ -177,7 +190,7 @@ const RecentActivityWidget = () => {
             <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e', flexShrink: 0 }}></div>
               <span style={{ fontSize: '0.8rem', color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                <strong style={{ color: '#fff' }}>@{act.username}</strong> claimed {act.item}
+                <strong style={{ color: '#fff' }}>@{act.username || 'Unknown'}</strong> claimed {act.item}
               </span>
             </div>
           ))}
@@ -195,7 +208,7 @@ const PurchaseHistory = ({ currentUser }) => {
   useEffect(() => {
     if (currentUser) {
       socket.on('sync_user_history', (data) => {
-        setHistory((Array.isArray(data) ? data : []).map(o => ({...o, item: o.itemName, date: new Date(o.timestamp).toLocaleString()})));
+        setHistory((Array.isArray(data) ? data : []).map(o => ({...o, item: o.itemName, date: formatDate(o.timestamp)})));
       });
       socket.emit('request_user_history', currentUser.username);
       return () => socket.off('sync_user_history');
@@ -222,9 +235,7 @@ const PurchaseHistory = ({ currentUser }) => {
                   <td style={{ color: 'var(--text-muted)' }}>{purchase.date}</td>
                   <td style={{ fontWeight: '600', color: '#fff' }}>{purchase.item}</td>
                   <td>
-                    <span className={`status-badge status-${purchase.status || 'pending'}`}>
-                      {purchase.status || 'pending'}
-                    </span>
+                    <span className={`status-badge status-${purchase.status || 'pending'}`}>{purchase.status || 'pending'}</span>
                   </td>
                   <td style={{ color: 'var(--primary)', fontFamily: 'monospace' }}>{purchase.price} XP</td>
                 </tr>
@@ -290,10 +301,10 @@ const AccountSettings = ({ currentUser }) => {
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div className="sleek-input-container" style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Full Name:</span><strong style={{ color: '#fff', fontSize: '0.8rem', textTransform: 'capitalize' }}>{currentUser.firstName} {currentUser.lastName}</strong>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Full Name:</span><strong style={{ color: '#fff', fontSize: '0.8rem', textTransform: 'capitalize' }}>{currentUser.firstName || currentUser.name || 'Unknown'} {currentUser.lastName || ''}</strong>
           </div>
           <div className="sleek-input-container" style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Email:</span><strong style={{ color: '#fff', fontSize: '0.8rem' }}>{currentUser.email}</strong>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Email:</span><strong style={{ color: '#fff', fontSize: '0.8rem' }}>{currentUser.email || 'Not Provided'}</strong>
           </div>
           <div className="sleek-input-container" style={{ background: 'rgba(0,0,0,0.3)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Username:</span><strong style={{ color: '#fff', fontSize: '0.8rem' }}>@{currentUser.username}</strong>
@@ -359,9 +370,10 @@ const AdminDashboard = () => {
       safeOrders.forEach(p => {
         if (p.status === 'completed') {
           approvedCount++;
-          const pDate = new Date(p.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const pDate = formatShortDate(p.timestamp);
           if (trendMap[pDate] !== undefined) trendMap[pDate]++;
-          productMap[p.itemName] = (productMap[p.itemName] || 0) + 1;
+          const safeItemName = p.itemName || "Unknown Item";
+          productMap[safeItemName] = (productMap[safeItemName] || 0) + 1;
         }
       });
 
@@ -489,7 +501,7 @@ const OrderQueue = () => {
                 const isPending = !p.status || p.status === 'pending';
                 return (
                   <tr key={i} style={{ background: isPending ? 'rgba(234, 179, 8, 0.05)' : 'transparent' }}>
-                    <td style={{ color: 'var(--text-muted)' }}>{new Date(p.timestamp).toLocaleString()}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{formatDate(p.timestamp)}</td>
                     <td style={{ fontWeight: '600', color: '#fff' }}>@{p.username}</td>
                     <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{p.name || 'Player'}</td>
                     <td style={{ color: '#fff' }}>{p.item}</td>
@@ -754,7 +766,7 @@ const NewsManager = ({ newsList }) => {
                   <button onClick={() => socket.emit('admin_delete_news', news.id)} style={{ position: 'absolute', top: '16px', right: '16px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444', borderRadius: '6px', padding: '6px', cursor: 'pointer', transition: 'all 0.2s' }} onMouseOver={e => e.currentTarget.style.transform = 'scale(1.1)'} onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}><Trash2 size={14} /></button>
                   <h4 style={{ color: '#fff', margin: '0 0 6px 0', fontSize: '0.95rem', paddingRight: '40px' }}>{news.title}</h4>
                   <p style={{ color: 'var(--text-muted)', margin: '0 0 12px 0', fontSize: '0.85rem', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{news.content}</p>
-                  <div style={{ color: 'var(--primary)', fontSize: '0.7rem', fontWeight: 'bold', fontFamily: 'monospace' }}>{new Date(news.timestamp).toLocaleString()}</div>
+                  <div style={{ color: 'var(--primary)', fontSize: '0.7rem', fontWeight: 'bold', fontFamily: 'monospace' }}>{formatDate(news.timestamp)}</div>
                 </div>
               ))}
             </div>
@@ -826,6 +838,7 @@ const SystemConfig = ({ config }) => {
     logoUrl: "./images/logo/logo2.png",
     heroImageUrl: "./images/logo/logo2.png",
     iconUrl: "./images/logo/logo2.png",
+    themeColor: "red",
     silverXp: 2000, goldXp: 5000, xpPerHour: 1800,
     boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
     enableMidnightBoost: false, boostMultiplier: 2,
@@ -867,6 +880,37 @@ const SystemConfig = ({ config }) => {
     setForm({...form, subMenus: form.subMenus.filter(m => m.id !== idToRemove)});
   };
 
+  // 🔥 NEW: Image File Upload Handler for Config Settings
+  const handleConfigImageUpload = (field, e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = field === 'heroImageUrl' ? 1200 : 400; 
+          let scaleSize = 1;
+          if (img.width > MAX_WIDTH) {
+             scaleSize = MAX_WIDTH / img.width;
+          }
+          canvas.width = img.width * scaleSize; 
+          canvas.height = img.height * scaleSize;
+          const ctx = canvas.getContext('2d'); 
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          const mimeType = field === 'heroImageUrl' ? 'image/jpeg' : 'image/png';
+          const quality = field === 'heroImageUrl' ? 0.8 : 1.0;
+          
+          const compressedBase64 = canvas.toDataURL(mimeType, quality);
+          setForm(prev => ({ ...prev, [field]: compressedBase64 }));
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   return (
     <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -894,18 +938,46 @@ const SystemConfig = ({ config }) => {
               <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Window Title</span>
               <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.windowTitle} onChange={e => setForm({...form, windowTitle: e.target.value})} />
             </div>
+            
             <div className="sleek-input-container">
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Corner Logo URL/Path</span>
-              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.logoUrl} onChange={e => setForm({...form, logoUrl: e.target.value})} />
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>App Theme Color</span>
+              <select className="sleek-input" style={{ appearance: 'none', cursor: 'pointer', paddingLeft: '14px', fontSize: '0.85rem' }} value={form.themeColor || 'red'} onChange={e => setForm({...form, themeColor: e.target.value})}>
+                <option value="red">Red (Default)</option>
+                <option value="yellow">Yellow</option>
+                <option value="gray">Gray</option>
+                <option value="green">Green</option>
+                <option value="pink">Pink</option>
+                <option value="blue">Blue</option>
+                <option value="violet">Violet</option>
+              </select>
+              <ChevronDown size={14} style={{ position: 'absolute', right: '14px', top: '38px', color: 'var(--text-muted)' }} />
             </div>
+
+            {/* 🔥 NEW: File Upload Inputs for Config Images */}
             <div className="sleek-input-container">
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Hero Slide Image URL</span>
-              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.heroImageUrl || ''} onChange={e => setForm({...form, heroImageUrl: e.target.value})} />
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Corner Logo</span>
+              <div style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
+                {form.logoUrl && <div style={{width:'32px', height:'32px', borderRadius:'6px', background:'#1a1a1a', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}><img src={form.logoUrl} style={{maxWidth:'100%', maxHeight:'100%', objectFit:'contain'}} alt="Logo"/></div>}
+                <input type="file" accept="image/*" className="file-upload-input" style={{flex: 1}} onChange={e => handleConfigImageUpload('logoUrl', e)} />
+              </div>
             </div>
+
             <div className="sleek-input-container">
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Taskbar Icon URL/Path</span>
-              <input type="text" className="sleek-input" style={{ paddingLeft: '14px', fontSize: '0.85rem' }} required value={form.iconUrl} onChange={e => setForm({...form, iconUrl: e.target.value})} />
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Hero Banner Image (Home Page)</span>
+              <div style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
+                {form.heroImageUrl && <div style={{width:'48px', height:'32px', borderRadius:'6px', background:'#1a1a1a', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}><img src={form.heroImageUrl} style={{maxWidth:'100%', maxHeight:'100%', objectFit:'cover'}} alt="Hero"/></div>}
+                <input type="file" accept="image/*" className="file-upload-input" style={{flex: 1}} onChange={e => handleConfigImageUpload('heroImageUrl', e)} />
+              </div>
             </div>
+
+            <div className="sleek-input-container">
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px', display: 'block', fontWeight: '600' }}>Taskbar/Tab Icon</span>
+              <div style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
+                {form.iconUrl && <div style={{width:'32px', height:'32px', borderRadius:'6px', background:'#1a1a1a', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}><img src={form.iconUrl} style={{maxWidth:'100%', maxHeight:'100%', objectFit:'contain'}} alt="Icon"/></div>}
+                <input type="file" accept="image/*" className="file-upload-input" style={{flex: 1}} onChange={e => handleConfigImageUpload('iconUrl', e)} />
+              </div>
+            </div>
+
           </div>
         </div>
 
@@ -1025,7 +1097,7 @@ const HomeDashboard = ({ inventory, newsList, topPicks, config }) => {
   const slides = [
     {
       id: 1, title: "EXPERIENCE PREMIUM GAMING", desc: `Welcome to ${config?.shopName || "4G Gamers"}. Enjoy high-performance rigs, ultra-fast internet, and an exclusive rewards program just for playing.`,
-      color: "linear-gradient(135deg, rgba(193,35,32,0.6) 0%, rgba(10,10,10,0.95) 100%)", icon: <img src={config?.heroImageUrl || config?.logoUrl || "./images/logo/logo2.png"} alt="Hero" style={blendedPhotoStyle} />
+      color: "linear-gradient(135deg, var(--primary-soft) 0%, rgba(10,10,10,0.95) 100%)", icon: <img src={config?.heroImageUrl || config?.logoUrl || "./images/logo/logo2.png"} alt="Hero" style={blendedPhotoStyle} />
     },
     {
       id: 2, title: "RANK UP FOR REWARDS", desc: "Earn XP every minute you play. Level up from Bronze to Gold to unlock premium Battle Passes, Steam points, and free PC time.",
@@ -1077,7 +1149,7 @@ const HomeDashboard = ({ inventory, newsList, topPicks, config }) => {
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', margin: '0 0 4px 0' }}>
                 <h3 style={{ color: '#22c55e', fontSize: '1rem', margin: 0 }}>{n.title}</h3>
-                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{new Date(n.timestamp).toLocaleDateString()}</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{formatDate(n.timestamp)}</span>
               </div>
               <p style={{ color: '#e2e8f0', fontSize: '0.85rem', margin: 0, whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>{n.content}</p>
             </div>
@@ -1312,6 +1384,7 @@ function AppContent() {
     logoUrl: "./images/logo/logo2.png",
     heroImageUrl: "./images/logo/logo2.png",
     iconUrl: "./images/logo/logo2.png",
+    themeColor: "red",
     silverXp: 2000, goldXp: 5000, xpPerHour: 1800, 
     boostDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
     enableMidnightBoost: false, boostMultiplier: 2,
@@ -1329,6 +1402,13 @@ function AppContent() {
     document.title = sysConfig.windowTitle;
     const fav = document.getElementById('appFavicon');
     if (fav) fav.href = sysConfig.iconUrl;
+
+    const t = THEMES[sysConfig.themeColor] || THEMES.red;
+    document.documentElement.style.setProperty('--primary', t.primary);
+    document.documentElement.style.setProperty('--primary-hover', t.hover);
+    document.documentElement.style.setProperty('--primary-glow', t.glow);
+    document.documentElement.style.setProperty('--primary-soft', t.soft);
+    
   }, [sysConfig]);
 
   const [newsList, setNewsList] = useState([]);
@@ -1377,7 +1457,10 @@ function AppContent() {
     socket.on('login_success', (user) => {
       setCurrentUser(user); setTotalXp(user.xp); setLifetimeXp(user.lifetimeXp);
       setShowLoginModal(false); 
-      toast.success(`Welcome back, ${user.firstName || user.name || user.username}!`);
+      
+      const displayName = user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : (user.name || user.username || 'Player');
+      toast.success(`Welcome back, ${displayName}!`);
+      
       if (user.isAdmin === true || user.isAdmin === 1 || user.username === 'admin') navigate('/dashboard');
     });
 
@@ -1816,7 +1899,7 @@ function AppContent() {
                       <div className="drop-avatar"><User size={24} color="#ccc" /></div>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <span className="drop-name" style={{ textTransform: 'capitalize' }}>
-                          {currentUser.firstName && currentUser.lastName ? `${currentUser.firstName} ${currentUser.lastName}` : currentUser.name}
+                          {currentUser.firstName && currentUser.lastName ? `${currentUser.firstName} ${currentUser.lastName}` : (currentUser.name || currentUser.username || 'Player')}
                         </span>
                         <span className="drop-user">@{currentUser.username}</span>
                       </div>
