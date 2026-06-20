@@ -13,7 +13,7 @@ const admin = require("firebase-admin");
 // 🔥 FIREBASE URLS (TWO DATABASES) 🔥
 // ==========================================
 const LICENSING_DB_URL = "https://projectx-data-default-rtdb.asia-southeast1.firebasedatabase.app";
-const STORE_DB_URL = "https://posinventory-77b87-default-rtdb.firebaseio.com";
+const STORE_DB_URL = "https://gamehub-35536-default-rtdb.firebaseio.com/";
 // ==========================================
 
 let mainWindow;
